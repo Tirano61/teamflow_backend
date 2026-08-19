@@ -13,8 +13,8 @@ import {
 import { User } from '../../auth/entities/user.entity';
 import { DiscussionStatus } from '../enums/discussion-status.enum';
 import { DiscussionType } from '../enums/discussion-type.enum';
-import { Application } from './application.entity';
-import { Indicator } from './indicator.entity';
+import { WorkModule } from './work-module.entity';
+import { Component } from './component.entity';
 import { DiscussionMessage } from './discussion_message.entity';
 import { DiscussionReadState } from './discussion_read_state.entity';
 import { Tag } from './tag.entity';
@@ -63,21 +63,21 @@ export class Discussion {
 	@UpdateDateColumn({ name: 'updated_at' })
 	updatedAt!: Date;
 
-	@ManyToMany(() => Application, (application) => application.discussions)
+	@ManyToMany(() => WorkModule, (workModule) => workModule.discussions)
 	@JoinTable({
-		name: 'discussion_applications',
+		name: 'discussion_work_modules',
 		joinColumn: { name: 'discussion_id', referencedColumnName: 'id' },
-		inverseJoinColumn: { name: 'application_id', referencedColumnName: 'id' },
+		inverseJoinColumn: { name: 'work_module_id', referencedColumnName: 'id' },
 	})
-	applications!: Application[];
+	workModules!: WorkModule[];
 
-	@ManyToMany(() => Indicator, (indicator) => indicator.discussions)
+	@ManyToMany(() => Component, (component) => component.discussions)
 	@JoinTable({
-		name: 'discussion_indicators',
+		name: 'discussion_components',
 		joinColumn: { name: 'discussion_id', referencedColumnName: 'id' },
-		inverseJoinColumn: { name: 'indicator_id', referencedColumnName: 'id' },
+		inverseJoinColumn: { name: 'component_id', referencedColumnName: 'id' },
 	})
-	indicators!: Indicator[];
+	components!: Component[];
 
 	@ManyToMany(() => Tag, (tag) => tag.discussions)
 	@JoinTable({

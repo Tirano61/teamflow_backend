@@ -1,23 +1,23 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, Repository } from 'typeorm';
-import { ApplicationCreateDto } from '../dto/create-application.dto';
-import { IndicatorCreateDto } from '../dto/create-indicator.dto';
+import { WorkModuleCreateDto } from '../dto/create-work-module.dto';
+import { ComponentCreateDto } from '../dto/create-component.dto';
 import { TagCreateDto } from '../dto/create-tag.dto';
-import { ApplicationUpdateDto } from '../dto/update-application.dto';
-import { IndicatorUpdateDto } from '../dto/update-indicator.dto';
+import { WorkModuleUpdateDto } from '../dto/update-work-module.dto';
+import { ComponentUpdateDto } from '../dto/update-component.dto';
 import { TagUpdateDto } from '../dto/update-tag.dto';
-import { Application } from '../entities/application.entity';
-import { Indicator } from '../entities/indicator.entity';
+import { WorkModule } from '../entities/work-module.entity';
+import { Component } from '../entities/component.entity';
 import { Tag } from '../entities/tag.entity';
 
 @Injectable()
 export class WorkspaceCatalogService {
 	constructor(
-		@InjectRepository(Application)
-		private readonly applicationRepository: Repository<Application>,
-		@InjectRepository(Indicator)
-		private readonly indicatorRepository: Repository<Indicator>,
+		@InjectRepository(WorkModule)
+		private readonly workModuleRepository: Repository<WorkModule>,
+		@InjectRepository(Component)
+		private readonly componentRepository: Repository<Component>,
 		@InjectRepository(Tag)
 		private readonly tagRepository: Repository<Tag>,
 	) { }
@@ -28,237 +28,237 @@ export class WorkspaceCatalogService {
 		return normalized;
 	}
 
-	async createApplication(dto: ApplicationCreateDto): Promise<Application> {
+	async createModule(dto: WorkModuleCreateDto): Promise<WorkModule> {
 		const name = this.normalizeName(dto.name);
-		const existing = await this.applicationRepository.findOne({
+		const existing = await this.workModuleRepository.findOne({
 			where: { name: ILike(name) },
 		});
-		if (existing) throw new BadRequestException('Application already exists');
+		if (existing) throw new BadRequestException('Module already exists');
 
-		const entity = this.applicationRepository.create({
+		const entity = this.workModuleRepository.create({
 			name,
 			description: dto.description,
 			active: true,
 		});
 
-		return this.applicationRepository.save(entity);
+		return this.workModuleRepository.save(entity);
 	}
 
-	async findApplicationById(
+	async findModuleById(
 		id: string,
 		includeInactive = false,
-	): Promise<Application> {
+	): Promise<WorkModule> {
 		const where = includeInactive ? { id } : { id, active: true };
-		const application = await this.applicationRepository.findOne({
+		const module = await this.workModuleRepository.findOne({
 			where,
-			relations: ['indicators'],
+			relations: ['components'],
 		});
-		if (!application) throw new NotFoundException('Application not found');
-		return application;
+		if (!module) throw new NotFoundException('Module not found');
+		return module;
 	}
 
-	async findAllApplications(includeInactive = false): Promise<Application[]> {
+	async findAllModules(includeInactive = false): Promise<WorkModule[]> {
 		const where = includeInactive ? {} : { active: true };
-		return this.applicationRepository.find({
+		return this.workModuleRepository.find({
 			where,
 			order: { createdAt: 'DESC' },
-			relations: ['indicators'],
+			relations: ['components'],
 		});
 	}
 
-	async updateApplication(
+	async updateModule(
 		id: string,
-		dto: ApplicationUpdateDto,
-	): Promise<Application> {
-		const application = await this.applicationRepository.findOne({
+		dto: WorkModuleUpdateDto,
+	): Promise<WorkModule> {
+		const module = await this.workModuleRepository.findOne({
 			where: { id },
 		});
-		if (!application) throw new NotFoundException('Application not found');
+		if (!module) throw new NotFoundException('Module not found');
 
 		if (dto.name) {
 			const normalizedName = this.normalizeName(dto.name);
-			const existing = await this.applicationRepository.findOne({
+			const existing = await this.workModuleRepository.findOne({
 				where: { name: ILike(normalizedName) },
 			});
 			if (existing && existing.id !== id)
-				throw new BadRequestException('Application already exists');
-			application.name = normalizedName;
+				throw new BadRequestException('Module already exists');
+			module.name = normalizedName;
 		}
 
 		if (dto.description !== undefined)
-			application.description = dto.description;
+			module.description = dto.description;
 
-		return this.applicationRepository.save(application);
+		return this.workModuleRepository.save(module);
 	}
 
-	async setApplicationActive(
+	async setModuleActive(
 		id: string,
 		active: boolean,
-	): Promise<Application> {
-		const application = await this.applicationRepository.findOne({
+	): Promise<WorkModule> {
+		const module = await this.workModuleRepository.findOne({
 			where: { id },
 		});
-		if (!application) throw new NotFoundException('Application not found');
-		application.active = active;
-		return this.applicationRepository.save(application);
+		if (!module) throw new NotFoundException('Module not found');
+		module.active = active;
+		return this.workModuleRepository.save(module);
 	}
 
-	async findApplicationByName(name: string): Promise<Application | null> {
-		return this.applicationRepository.findOne({
+	async findModuleByName(name: string): Promise<WorkModule | null> {
+		return this.workModuleRepository.findOne({
 			where: { name: ILike(this.normalizeName(name)) },
-			relations: ['indicators'],
+			relations: ['components'],
 		});
 	}
 
-	async createIndicator(dto: IndicatorCreateDto): Promise<Indicator> {
+	async createComponent(dto: ComponentCreateDto): Promise<Component> {
 		const name = this.normalizeName(dto.name);
-		const existing = await this.indicatorRepository.findOne({
+		const existing = await this.componentRepository.findOne({
 			where: { name: ILike(name) },
 		});
-		if (existing) throw new BadRequestException('Indicator already exists');
+		if (existing) throw new BadRequestException('Component already exists');
 
-		const entity = this.indicatorRepository.create({
+		const entity = this.componentRepository.create({
 			name,
 			description: dto.description,
 			active: true,
 		});
 
-		return this.indicatorRepository.save(entity);
+		return this.componentRepository.save(entity);
 	}
 
-	async findIndicatorById(
+	async findComponentById(
 		id: string,
 		includeInactive = false,
-	): Promise<Indicator> {
+	): Promise<Component> {
 		const where = includeInactive ? { id } : { id, active: true };
-		const indicator = await this.indicatorRepository.findOne({
+		const component = await this.componentRepository.findOne({
 			where,
-			relations: ['applications'],
+			relations: ['workModules'],
 		});
-		if (!indicator) throw new NotFoundException('Indicator not found');
-		return indicator;
+		if (!component) throw new NotFoundException('Component not found');
+		return component;
 	}
 
-	async findAllIndicators(includeInactive = false): Promise<Indicator[]> {
+	async findAllComponents(includeInactive = false): Promise<Component[]> {
 		const where = includeInactive ? {} : { active: true };
-		return this.indicatorRepository.find({
+		return this.componentRepository.find({
 			where,
 			order: { createdAt: 'DESC' },
-			relations: ['applications'],
+			relations: ['workModules'],
 		});
 	}
 
-	async updateIndicator(
+	async updateComponent(
 		id: string,
-		dto: IndicatorUpdateDto,
-	): Promise<Indicator> {
-		const indicator = await this.indicatorRepository.findOne({ where: { id } });
-		if (!indicator) throw new NotFoundException('Indicator not found');
+		dto: ComponentUpdateDto,
+	): Promise<Component> {
+		const component = await this.componentRepository.findOne({ where: { id } });
+		if (!component) throw new NotFoundException('Component not found');
 
 		if (dto.name) {
 			const normalizedName = this.normalizeName(dto.name);
-			const existing = await this.indicatorRepository.findOne({
+			const existing = await this.componentRepository.findOne({
 				where: { name: ILike(normalizedName) },
 			});
 			if (existing && existing.id !== id)
-				throw new BadRequestException('Indicator already exists');
-			indicator.name = normalizedName;
+				throw new BadRequestException('Component already exists');
+			component.name = normalizedName;
 		}
 
-		if (dto.description !== undefined) indicator.description = dto.description;
+		if (dto.description !== undefined) component.description = dto.description;
 
-		return this.indicatorRepository.save(indicator);
+		return this.componentRepository.save(component);
 	}
 
-	async setIndicatorActive(id: string, active: boolean): Promise<Indicator> {
-		const indicator = await this.indicatorRepository.findOne({ where: { id } });
-		if (!indicator) throw new NotFoundException('Indicator not found');
-		indicator.active = active;
-		return this.indicatorRepository.save(indicator);
+	async setComponentActive(id: string, active: boolean): Promise<Component> {
+		const component = await this.componentRepository.findOne({ where: { id } });
+		if (!component) throw new NotFoundException('Component not found');
+		component.active = active;
+		return this.componentRepository.save(component);
 	}
 
-	async findIndicatorByName(name: string): Promise<Indicator | null> {
-		return this.indicatorRepository.findOne({
+	async findComponentByName(name: string): Promise<Component | null> {
+		return this.componentRepository.findOne({
 			where: { name: ILike(this.normalizeName(name)) },
-			relations: ['applications'],
+			relations: ['workModules'],
 		});
 	}
 
-	async addIndicatorToApplication(
-		applicationId: string,
-		indicatorId: string,
-	): Promise<Application> {
-		const application = await this.applicationRepository.findOne({
-			where: { id: applicationId },
-			relations: ['indicators'],
+	async addComponentToModule(
+		moduleId: string,
+		componentId: string,
+	): Promise<WorkModule> {
+		const module = await this.workModuleRepository.findOne({
+			where: { id: moduleId },
+			relations: ['components'],
 		});
-		if (!application) throw new NotFoundException('Application not found');
+		if (!module) throw new NotFoundException('Module not found');
 
-		const indicator = await this.indicatorRepository.findOne({
-			where: { id: indicatorId },
+		const component = await this.componentRepository.findOne({
+			where: { id: componentId },
 		});
-		if (!indicator) throw new NotFoundException('Indicator not found');
+		if (!component) throw new NotFoundException('Component not found');
 
-		const alreadyRelated = (application.indicators ?? []).some(
-			(item) => item.id === indicator.id,
+		const alreadyRelated = (module.components ?? []).some(
+			(item) => item.id === component.id,
 		);
 		if (alreadyRelated)
 			throw new BadRequestException(
-				'Application and indicator relation already exists',
+				'Module and component relation already exists',
 			);
 
-		application.indicators = [...(application.indicators ?? []), indicator];
-		return this.applicationRepository.save(application);
+		module.components = [...(module.components ?? []), component];
+		return this.workModuleRepository.save(module);
 	}
 
-	async removeIndicatorFromApplication(
-		applicationId: string,
-		indicatorId: string,
-	): Promise<Application> {
-		const application = await this.applicationRepository.findOne({
-			where: { id: applicationId },
-			relations: ['indicators'],
+	async removeComponentFromModule(
+		moduleId: string,
+		componentId: string,
+	): Promise<WorkModule> {
+		const module = await this.workModuleRepository.findOne({
+			where: { id: moduleId },
+			relations: ['components'],
 		});
-		if (!application) throw new NotFoundException('Application not found');
+		if (!module) throw new NotFoundException('Module not found');
 
-		const hasRelation = (application.indicators ?? []).some(
-			(item) => item.id === indicatorId,
+		const hasRelation = (module.components ?? []).some(
+			(item) => item.id === componentId,
 		);
 		if (!hasRelation)
 			throw new NotFoundException(
-				'Application and indicator relation not found',
+				'Module and component relation not found',
 			);
 
-		application.indicators = (application.indicators ?? []).filter(
-			(item) => item.id !== indicatorId,
+		module.components = (module.components ?? []).filter(
+			(item) => item.id !== componentId,
 		);
-		return this.applicationRepository.save(application);
+		return this.workModuleRepository.save(module);
 	}
 
-	async getIndicatorsByApplication(
-		applicationId: string,
+	async getComponentsByModule(
+		moduleId: string,
 		includeInactive = false,
-	): Promise<Indicator[]> {
-		const application = await this.applicationRepository.findOne({
-			where: { id: applicationId },
-			relations: ['indicators'],
+	): Promise<Component[]> {
+		const module = await this.workModuleRepository.findOne({
+			where: { id: moduleId },
+			relations: ['components'],
 		});
-		if (!application) throw new NotFoundException('Application not found');
-		if (includeInactive) return application.indicators ?? [];
-		return (application.indicators ?? []).filter((item) => item.active);
+		if (!module) throw new NotFoundException('Module not found');
+		if (includeInactive) return module.components ?? [];
+		return (module.components ?? []).filter((item) => item.active);
 	}
 
-	async getApplicationsByIndicator(
-		indicatorId: string,
+	async getModulesByComponent(
+		componentId: string,
 		includeInactive = false,
-	): Promise<Application[]> {
-		const indicator = await this.indicatorRepository.findOne({
-			where: { id: indicatorId },
-			relations: ['applications'],
+	): Promise<WorkModule[]> {
+		const component = await this.componentRepository.findOne({
+			where: { id: componentId },
+			relations: ['workModules'],
 		});
-		if (!indicator) throw new NotFoundException('Indicator not found');
-		if (includeInactive) return indicator.applications ?? [];
-		return (indicator.applications ?? []).filter((item) => item.active);
+		if (!component) throw new NotFoundException('Component not found');
+		if (includeInactive) return component.workModules ?? [];
+		return (component.workModules ?? []).filter((item) => item.active);
 	}
 
 	async findAllTags(includeInactive = false): Promise<Tag[]> {

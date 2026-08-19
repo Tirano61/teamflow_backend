@@ -3,8 +3,8 @@ import { Auth } from '../../auth/decorators/auth.decorator';
 import { GetUser } from '../../auth/decorators/get-user.decorator';
 import { User } from '../../auth/entities/user.entity';
 import { ValidRoles } from '../../auth/interfaces/valid-roles';
-import { AddApplicationToDiscussionDto } from '../dto/add-application-to-discussion.dto';
-import { AddIndicatorToDiscussionDto } from '../dto/add-indicator-to-discussion.dto';
+import { AddModuleToDiscussionDto } from '../dto/add-module-to-discussion.dto';
+import { AddComponentToDiscussionDto } from '../dto/add-component-to-discussion.dto';
 import { AddTagToDiscussionDto } from '../dto/add-tag-to-discussion.dto';
 import { DiscussionContextService } from '../services/discussion-context.service';
 
@@ -12,58 +12,58 @@ import { DiscussionContextService } from '../services/discussion-context.service
 export class DiscussionContextController {
 	constructor(private readonly discussionContextService: DiscussionContextService) { }
 
-	@Post('discussions/:id/applications')
+	@Post('discussions/:id/modules')
 	@Auth(ValidRoles.developer)
-	addApplicationToDiscussion(
+	addModuleToDiscussion(
 		@Param('id', ParseUUIDPipe) id: string,
-		@Body() dto: AddApplicationToDiscussionDto,
+		@Body() dto: AddModuleToDiscussionDto,
 		@GetUser() user: User,
 	) {
-		return this.discussionContextService.addApplicationToDiscussion(
+		return this.discussionContextService.addModuleToDiscussion(
 			id,
-			dto.applicationId,
+			dto.moduleId,
 			user,
 		);
 	}
 
-	@Delete('discussions/:id/applications/:applicationId')
+	@Delete('discussions/:id/modules/:moduleId')
 	@Auth(ValidRoles.developer)
-	removeApplicationFromDiscussion(
+	removeModuleFromDiscussion(
 		@Param('id', ParseUUIDPipe) id: string,
-		@Param('applicationId', ParseUUIDPipe) applicationId: string,
+		@Param('moduleId', ParseUUIDPipe) moduleId: string,
 		@GetUser() user: User,
 	) {
-		return this.discussionContextService.removeApplicationFromDiscussion(
+		return this.discussionContextService.removeModuleFromDiscussion(
 			id,
-			applicationId,
+			moduleId,
 			user,
 		);
 	}
 
-	@Post('discussions/:id/indicators')
+	@Post('discussions/:id/components')
 	@Auth(ValidRoles.developer)
-	addIndicatorToDiscussion(
+	addComponentToDiscussion(
 		@Param('id', ParseUUIDPipe) id: string,
-		@Body() dto: AddIndicatorToDiscussionDto,
+		@Body() dto: AddComponentToDiscussionDto,
 		@GetUser() user: User,
 	) {
-		return this.discussionContextService.addIndicatorToDiscussion(
+		return this.discussionContextService.addComponentToDiscussion(
 			id,
-			dto.indicatorId,
+			dto.componentId,
 			user,
 		);
 	}
 
-	@Delete('discussions/:id/indicators/:indicatorId')
+	@Delete('discussions/:id/components/:componentId')
 	@Auth(ValidRoles.developer)
-	removeIndicatorFromDiscussion(
+	removeComponentFromDiscussion(
 		@Param('id', ParseUUIDPipe) id: string,
-		@Param('indicatorId', ParseUUIDPipe) indicatorId: string,
+		@Param('componentId', ParseUUIDPipe) componentId: string,
 		@GetUser() user: User,
 	) {
-		return this.discussionContextService.removeIndicatorFromDiscussion(
+		return this.discussionContextService.removeComponentFromDiscussion(
 			id,
-			indicatorId,
+			componentId,
 			user,
 		);
 	}

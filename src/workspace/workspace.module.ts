@@ -10,11 +10,11 @@ import { WorkspaceNotificationController } from './controllers/workspace-notific
 import { DiscussionContextController } from './controllers/discussion-context.controller';
 import { DiscussionMessageController } from './controllers/discussion-message.controller';
 import { DiscussionController } from './controllers/discussion.controller';
-import { Application } from './entities/application.entity';
+import { WorkModule } from './entities/work-module.entity';
+import { Component } from './entities/component.entity';
 import { Discussion } from './entities/discussion.entity';
 import { DiscussionMessage } from './entities/discussion_message.entity';
 import { DiscussionReadState } from './entities/discussion_read_state.entity';
-import { Indicator } from './entities/indicator.entity';
 import { Tag } from './entities/tag.entity';
 import { UserDevice } from './entities/user_device.entity';
 import { WorkspaceCatalogService } from './services/workspace-catalog.service';
@@ -29,8 +29,8 @@ import { DiscussionService } from './services/discussion.service';
 	imports: [
 		TypeOrmModule.forFeature([
 			User,
-			Application,
-			Indicator,
+			WorkModule,
+			Component,
 			Discussion,
 			Tag,
 			DiscussionMessage,

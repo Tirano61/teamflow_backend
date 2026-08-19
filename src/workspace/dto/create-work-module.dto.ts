@@ -1,6 +1,6 @@
 import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
-export class ApplicationCreateDto {
+export class WorkModuleCreateDto {
   @IsString()
   @MinLength(1)
   @MaxLength(150)

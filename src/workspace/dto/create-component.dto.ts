@@ -1,6 +1,6 @@
 import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
-export class IndicatorCreateDto {
+export class ComponentCreateDto {
   @IsString()
   @MinLength(1)
   @MaxLength(150)

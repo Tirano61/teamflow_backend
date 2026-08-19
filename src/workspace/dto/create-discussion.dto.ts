@@ -23,13 +23,13 @@ export class DiscussionCreateDto {
 	@IsArray()
 	@ArrayUnique()
 	@IsUUID('4', { each: true })
-	applicationIds?: string[];
+	moduleIds?: string[];
 
 	@IsOptional()
 	@IsArray()
 	@ArrayUnique()
 	@IsUUID('4', { each: true })
-	indicatorIds?: string[];
+	componentIds?: string[];
 
 	@IsOptional()
 	@IsArray()

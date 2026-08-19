@@ -33,35 +33,35 @@ Autenticacion:
 - Auth: Usuario autenticado
 - Descripcion: Valida token actual y retorna datos del usuario autenticado.
 
-## Applications
+## Modules
 
-### GET /workspace/applications
+### GET /workspace/modules
 - Auth: Usuario autenticado
-- Descripcion: Lista solo applications activas.
+- Descripcion: Lista solo modules activas.
 
-### GET /workspace/applications/all
+### GET /workspace/modules/all
 - Auth: Developer
-- Descripcion: Lista applications activas e inactivas.
+- Descripcion: Lista modules activas e inactivas.
 
-### GET /workspace/applications/:id
+### GET /workspace/modules/:id
 - Auth: Usuario autenticado
-- Descripcion: Obtiene una application activa por id.
+- Descripcion: Obtiene una module activa por id.
 
-### GET /workspace/applications/all/:id
+### GET /workspace/modules/all/:id
 - Auth: Developer
-- Descripcion: Obtiene una application por id incluyendo inactivas.
+- Descripcion: Obtiene una module por id incluyendo inactivas.
 
-### POST /workspace/applications
+### POST /workspace/modules
 - Auth: Developer
 - Body:
 ```json
 {
   "name": "Remoto",
-  "description": "Aplicacion de asistencia remota"
+  "description": "Modulo de asistencia remota"
 }
 ```
 
-### PATCH /workspace/applications/:id
+### PATCH /workspace/modules/:id
 - Auth: Developer
 - Body:
 ```json
@@ -71,7 +71,7 @@ Autenticacion:
 }
 ```
 
-### PATCH /workspace/applications/:id/active
+### PATCH /workspace/modules/:id/active
 - Auth: Developer
 - Body:
 ```json
@@ -80,25 +80,25 @@ Autenticacion:
 }
 ```
 
-## Indicators
+## Components
 
-### GET /workspace/indicators
+### GET /workspace/components
 - Auth: Usuario autenticado
-- Descripcion: Lista solo indicators activos.
+- Descripcion: Lista solo components activos.
 
-### GET /workspace/indicators/all
+### GET /workspace/components/all
 - Auth: Developer
-- Descripcion: Lista indicators activos e inactivos.
+- Descripcion: Lista components activos e inactivos.
 
-### GET /workspace/indicators/:id
+### GET /workspace/components/:id
 - Auth: Usuario autenticado
-- Descripcion: Obtiene un indicator activo por id.
+- Descripcion: Obtiene un component activo por id.
 
-### GET /workspace/indicators/all/:id
+### GET /workspace/components/all/:id
 - Auth: Developer
-- Descripcion: Obtiene un indicator por id incluyendo inactivos.
+- Descripcion: Obtiene un component por id incluyendo inactivos.
 
-### POST /workspace/indicators
+### POST /workspace/components
 - Auth: Developer
 - Body:
 ```json
@@ -108,7 +108,7 @@ Autenticacion:
 }
 ```
 
-### PATCH /workspace/indicators/:id
+### PATCH /workspace/components/:id
 - Auth: Developer
 - Body:
 ```json
@@ -118,7 +118,7 @@ Autenticacion:
 }
 ```
 
-### PATCH /workspace/indicators/:id/active
+### PATCH /workspace/components/:id/active
 - Auth: Developer
 - Body:
 ```json
@@ -127,23 +127,23 @@ Autenticacion:
 }
 ```
 
-## Relations Application <-> Indicator
+## Relations Module <-> Component
 
-### POST /workspace/applications/:applicationId/indicators/:indicatorId
+### POST /workspace/modules/:moduleId/components/:componentId
 - Auth: Developer
-- Descripcion: Asocia un indicator a una application.
+- Descripcion: Asocia un component a una module.
 
-### DELETE /workspace/applications/:applicationId/indicators/:indicatorId
+### DELETE /workspace/modules/:moduleId/components/:componentId
 - Auth: Developer
-- Descripcion: Elimina asociacion entre application e indicator.
+- Descripcion: Elimina asociacion entre module e component.
 
-### GET /workspace/applications/:applicationId/indicators
+### GET /workspace/modules/:moduleId/components
 - Auth: Usuario autenticado
-- Descripcion: Lista indicators activos asociados a una application.
+- Descripcion: Lista components activos asociados a una module.
 
-### GET /workspace/indicators/:indicatorId/applications
+### GET /workspace/components/:componentId/modules
 - Auth: Usuario autenticado
-- Descripcion: Lista applications activas asociadas a un indicator.
+- Descripcion: Lista modules activas asociadas a un component.
 
 ## Discussions
 
@@ -156,8 +156,8 @@ Autenticacion:
   "type": "ERROR",
   "title": "Problema en la app remota",
   "initialMessageContent": "Descripcion inicial del problema",
-  "applicationIds": ["{{applicationId}}"],
-  "indicatorIds": ["{{indicatorId}}"],
+  "moduleIds": ["{{moduleId}}"],
+  "componentIds": ["{{componentId}}"],
   "tagIds": ["{{tagId}}"]
 }
 ```
@@ -170,8 +170,8 @@ Autenticacion:
   - limit (default 20)
   - type (ERROR | IDEA | IMPROVEMENT | QUESTION)
   - status (NEW | REVIEW | IN_PROGRESS | RESOLVED)
-  - applicationIds (CSV de UUIDs)
-  - indicatorIds (CSV de UUIDs)
+  - moduleIds (CSV de UUIDs)
+  - componentIds (CSV de UUIDs)
   - tagIds (CSV de UUIDs)
   - createdBy (UUID de usuario)
   - mine (true|false)
@@ -181,7 +181,7 @@ Autenticacion:
 
 ### GET /workspace/discussions/:id
 - Auth: Usuario autenticado
-- Descripcion: Obtiene una discussion por id con creador, applications, indicators y tags. Incluye `isUnread` para el usuario autenticado.
+- Descripcion: Obtiene una discussion por id con creador, modules, components y tags. Incluye `isUnread` para el usuario autenticado.
 
 ### POST /workspace/discussions/:id/read
 - Auth: Usuario autenticado
@@ -189,8 +189,8 @@ Autenticacion:
 
 ### PATCH /workspace/discussions/:id
 - Auth: Usuario autenticado
-- Descripcion: Actualiza discussion. `title` y `type` pueden modificarse por el creador o por un developer. `applicationIds` e `indicatorIds` solo pueden modificarse por un developer.
-- Reglas de contexto (applications/indicators):
+- Descripcion: Actualiza discussion. `title` y `type` pueden modificarse por el creador o por un developer. `moduleIds` e `componentIds` solo pueden modificarse por un developer.
+- Reglas de contexto (modules/components):
   - Permite reemplazar completamente asociaciones enviando los arrays.
   - Enviar arrays vacios (`[]`) elimina todas las asociaciones de ese catalogo.
   - Si un id no existe, responde error.
@@ -200,8 +200,8 @@ Autenticacion:
 {
   "type": "IMPROVEMENT",
   "title": "Titulo actualizado",
-  "applicationIds": ["{{applicationId}}"],
-  "indicatorIds": ["{{indicatorId}}"],
+  "moduleIds": ["{{moduleId}}"],
+  "componentIds": ["{{componentId}}"],
   "tagIds": ["{{tagId}}"]
 }
 ```
@@ -246,32 +246,32 @@ Autenticacion:
 
 ## Discussion relations (Developer)
 
-### POST /workspace/discussions/:id/applications
+### POST /workspace/discussions/:id/modules
 - Auth: Developer
 - Body:
 ```json
 {
-  "applicationId": "{{applicationId}}"
+  "moduleId": "{{moduleId}}"
 }
 ```
 
-### DELETE /workspace/discussions/:id/applications/:applicationId
+### DELETE /workspace/discussions/:id/modules/:moduleId
 - Auth: Developer
 
-### POST /workspace/discussions/:id/indicators
+### POST /workspace/discussions/:id/components
 - Auth: Developer
 - Body:
 ```json
 {
-  "indicatorId": "{{indicatorId}}"
+  "componentId": "{{componentId}}"
 }
 ```
 
-### DELETE /workspace/discussions/:id/indicators/:indicatorId
+### DELETE /workspace/discussions/:id/components/:componentId
 - Auth: Developer
 
 ### Nota sobre reemplazo masivo de contexto
-- Para reemplazar todas las applications/indicators de una discussion en una sola operacion, usar `PATCH /workspace/discussions/:id` con `applicationIds` y/o `indicatorIds`.
+- Para reemplazar todas las modules/components de una discussion en una sola operacion, usar `PATCH /workspace/discussions/:id` con `moduleIds` y/o `componentIds`.
 
 ### POST /workspace/discussions/:id/tags
 - Auth: Developer
@@ -544,13 +544,13 @@ Eventos silent sync implementados (data-only):
 }
 ```
 
-7) Contexto de discussion actualizado (applications/indicators)
+7) Contexto de discussion actualizado (modules/components)
 - Triggers:
-  - `POST /workspace/discussions/:id/applications`
-  - `DELETE /workspace/discussions/:id/applications/:applicationId`
-  - `POST /workspace/discussions/:id/indicators`
-  - `DELETE /workspace/discussions/:id/indicators/:indicatorId`
-  - `PATCH /workspace/discussions/:id` (cuando cambia `applicationIds` y/o `indicatorIds`)
+  - `POST /workspace/discussions/:id/modules`
+  - `DELETE /workspace/discussions/:id/modules/:moduleId`
+  - `POST /workspace/discussions/:id/components`
+  - `DELETE /workspace/discussions/:id/components/:componentId`
+  - `PATCH /workspace/discussions/:id` (cuando cambia `moduleIds` y/o `componentIds`)
 - Condicion: solo cuando hay cambio real en contexto.
 - Payload:
 ```json
@@ -605,8 +605,8 @@ Notas operativas:
 ```
 
 ## Variables recomendadas para pruebas
-- applicationId: UUID valido de applications
-- indicatorId: UUID valido de indicators
+- moduleId: UUID valido de modules
+- componentId: UUID valido de components
 - discussionId: UUID valido de discussions
 - tagId: UUID valido de tags
 - messageId: UUID valido de discussion_messages
