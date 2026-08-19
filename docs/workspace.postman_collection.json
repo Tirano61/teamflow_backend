@@ -1,0 +1,959 @@
+{
+	"info": {
+		"name": "Develop Workflow - Endpoints",
+		"_postman_id": "f0f9a3a3-8c7a-4c61-9c15-1e22f8f0d123",
+		"description": "Coleccion de endpoints del modulo workspace. Incluye eventos FCM visibles y silent sync (data-only) de Fase 8E.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "DWbaseUrl",
+			"value": "http://localhost:3000/api/v1"
+		},
+		{
+			"key": "email",
+			"value": "developer@example.com"
+		},
+		{
+			"key": "password",
+			"value": "DevPassword123"
+		},
+		{
+			"key": "token",
+			"value": ""
+		},
+		{
+			"key": "applicationId",
+			"value": ""
+		},
+		{
+			"key": "indicatorId",
+			"value": ""
+		},
+		{
+			"key": "discussionId",
+			"value": ""
+		},
+		{
+			"key": "tagId",
+			"value": ""
+		},
+		{
+			"key": "messageId",
+			"value": ""
+		},
+		{
+			"key": "developerUserId",
+			"value": ""
+		},
+		{
+			"key": "deviceToken",
+			"value": ""
+		}
+	],
+	"item": [
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "Login and save token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Login status is 201 or 200', function () {",
+									"  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"var token = data.token || data.access_token || (data.data && data.data.token);",
+									"pm.test('Response has token', function () {",
+									"  pm.expect(token).to.be.a('string').and.not.empty;",
+									"});",
+									"pm.collectionVariables.set('token', token);",
+									"if (pm.environment && pm.environment.name) { pm.environment.set('token', token); }",
+									"pm.globals.set('token', token);",
+									"if (data.id) {",
+									"  pm.collectionVariables.set('userId', data.id);",
+									"  if (pm.environment && pm.environment.name) { pm.environment.set('userId', data.id); }",
+									"}",
+									"console.log('Token guardado en collection/environment/globals');"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{DWbaseUrl}}/auth/login"
+					}
+				},
+				{
+					"name": "Validate token",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/auth/validate"
+					}
+				}
+			]
+		},
+		{
+			"name": "Applications",
+			"item": [
+				{
+					"name": "List active applications",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/applications"
+					}
+				},
+				{
+					"name": "List all applications (developer)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/applications/all"
+					}
+				},
+				{
+					"name": "Get active application by id",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/applications/{{applicationId}}"
+					}
+				},
+				{
+					"name": "Get application by id including inactive (developer)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/applications/all/{{applicationId}}"
+					}
+				},
+				{
+					"name": "Create application (developer)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Remoto\",\n  \"description\": \"Aplicacion de asistencia remota\"\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/applications"
+					}
+				},
+				{
+					"name": "Update application (developer)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Remoto V2\",\n  \"description\": \"Descripcion actualizada\"\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/applications/{{applicationId}}"
+					}
+				},
+				{
+					"name": "Set application active flag (developer)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"active\": false\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/applications/{{applicationId}}/active"
+					}
+				}
+			]
+		},
+		{
+			"name": "Indicators",
+			"item": [
+				{
+					"name": "List active indicators",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/indicators"
+					}
+				},
+				{
+					"name": "List all indicators (developer)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/indicators/all"
+					}
+				},
+				{
+					"name": "Get active indicator by id",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/indicators/{{indicatorId}}"
+					}
+				},
+				{
+					"name": "Get indicator by id including inactive (developer)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/indicators/all/{{indicatorId}}"
+					}
+				},
+				{
+					"name": "Create indicator (developer)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"ST-456\",\n  \"description\": \"Indicador de prueba\"\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/indicators"
+					}
+				},
+				{
+					"name": "Update indicator (developer)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"ST-456-NEW\",\n  \"description\": \"Descripcion actualizada\"\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/indicators/{{indicatorId}}"
+					}
+				},
+				{
+					"name": "Set indicator active flag (developer)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"active\": false\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/indicators/{{indicatorId}}/active"
+					}
+				}
+			]
+		},
+		{
+			"name": "Application-Indicator Relations",
+			"item": [
+				{
+					"name": "Add indicator to application (developer)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/applications/{{applicationId}}/indicators/{{indicatorId}}"
+					}
+				},
+				{
+					"name": "Remove indicator from application (developer)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/applications/{{applicationId}}/indicators/{{indicatorId}}"
+					}
+				},
+				{
+					"name": "List indicators by application",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/applications/{{applicationId}}/indicators"
+					}
+				},
+				{
+					"name": "List applications by indicator",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/indicators/{{indicatorId}}/applications"
+					}
+				}
+			]
+		},
+		{
+			"name": "Discussions",
+			"item": [
+				{
+					"name": "Create discussion (auth)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"type\": \"ERROR\",\n  \"title\": \"Problema en app\",\n  \"initialMessageContent\": \"Descripcion inicial del problema\",\n  \"applicationIds\": [\"{{applicationId}}\"],\n  \"indicatorIds\": [\"{{indicatorId}}\"],\n  \"tagIds\": [\"{{tagId}}\"]\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/discussions"
+					}
+				},
+				{
+					"name": "List discussions (auth)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/discussions?page=1&limit=20&type=ERROR&status=NEW&applicationIds={{applicationId}}&indicatorIds={{indicatorId}}&tagIds={{tagId}}&mine=false&assignedToMe=false&assignedDeveloperId={{developerUserId}}&unread=false"
+					}
+				},
+				{
+					"name": "List assignable developers (auth)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/developers"
+					}
+				},
+				{
+					"name": "Get discussion by id (auth)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}"
+					}
+				},
+				{
+					"name": "Mark discussion as read (auth)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/read"
+					}
+				},
+				{
+					"name": "Update discussion status (developer)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": \"IN_PROGRESS\"\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/status"
+					}
+				},
+				{
+					"name": "Update discussion (auth, context only developer)",
+					"description": "Si cambia realmente applicationIds y/o indicatorIds, backend emite FCM silent sync data-only: DISCUSSION_CONTEXT_CHANGED (sin notification visible).",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"type\": \"IMPROVEMENT\",\n  \"title\": \"Titulo actualizado\",\n  \"applicationIds\": [\"{{applicationId}}\"],\n  \"indicatorIds\": [\"{{indicatorId}}\"],\n  \"tagIds\": [\"{{tagId}}\"]\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}"
+					}
+				},
+				{
+					"name": "Create discussion message (auth)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"type\": \"TEXT\",\n  \"content\": \"Necesitamos revisar este caso en produccion\"\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/messages"
+					}
+				},
+				{
+					"name": "Create discussion attachment message (auth)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "type",
+									"value": "IMAGE",
+									"type": "text"
+								},
+								{
+									"key": "content",
+									"value": "Adjunto para analizar el problema",
+									"type": "text"
+								},
+								{
+									"key": "file",
+									"type": "file",
+									"src": []
+								}
+							]
+						},
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/messages/files"
+					}
+				},
+				{
+					"name": "List discussion messages (auth)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/messages?page=1&limit=50&type=TEXT"
+					}
+				},
+				{
+					"name": "Update discussion message (author only)",
+					"description": "Tras edicion exitosa, backend emite FCM silent sync data-only: DISCUSSION_MESSAGE_UPDATED (sin notification visible).",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"content\": \"Mensaje actualizado\"\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/messages/{{messageId}}"
+					}
+				},
+				{
+					"name": "Delete discussion message (author only)",
+					"description": "Tras eliminacion completa (Cloudinary si aplica + DB), backend emite FCM silent sync data-only: DISCUSSION_MESSAGE_DELETED (sin notification visible).",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/messages/{{messageId}}"
+					}
+				},
+				{
+					"name": "Add discussion assignments (developer)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"developerUserIds\": [\"{{developerUserId}}\"]\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/assignments"
+					}
+				},
+				{
+					"name": "Replace discussion assignments (developer)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"developerUserIds\": [\"{{developerUserId}}\"]\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/assignments"
+					}
+				},
+				{
+					"name": "Remove discussion assignment (developer)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/assignments/{{developerUserId}}"
+					}
+				},
+				{
+					"name": "Add application to discussion (developer)",
+					"description": "Si la relacion se agrega correctamente, backend emite FCM silent sync data-only: DISCUSSION_CONTEXT_CHANGED (sin notification visible).",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"applicationId\": \"{{applicationId}}\"\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/applications"
+					}
+				},
+				{
+					"name": "Remove application from discussion (developer)",
+					"description": "Si la relacion se elimina correctamente, backend emite FCM silent sync data-only: DISCUSSION_CONTEXT_CHANGED (sin notification visible).",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/applications/{{applicationId}}"
+					}
+				},
+				{
+					"name": "Add indicator to discussion (developer)",
+					"description": "Si la relacion se agrega correctamente, backend emite FCM silent sync data-only: DISCUSSION_CONTEXT_CHANGED (sin notification visible).",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"indicatorId\": \"{{indicatorId}}\"\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/indicators"
+					}
+				},
+				{
+					"name": "Remove indicator from discussion (developer)",
+					"description": "Si la relacion se elimina correctamente, backend emite FCM silent sync data-only: DISCUSSION_CONTEXT_CHANGED (sin notification visible).",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/indicators/{{indicatorId}}"
+					}
+				},
+				{
+					"name": "Add tag to discussion (developer)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"tagId\": \"{{tagId}}\"\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/tags"
+					}
+				},
+				{
+					"name": "Remove tag from discussion (developer)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/tags/{{tagId}}"
+					}
+				}
+			]
+		},
+		{
+			"name": "Devices & Notifications",
+			"item": [
+				{
+					"name": "Register device token (auth)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"{{deviceToken}}\",\n  \"platform\": \"ANDROID\"\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/devices"
+					}
+				},
+				{
+					"name": "Unregister device token (auth)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"{{deviceToken}}\"\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/devices"
+					}
+				},
+				{
+					"name": "Send test push to current user (auth)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/notifications/test"
+					}
+				}
+			]
+		},
+		{
+			"name": "Tags",
+			"item": [
+				{
+					"name": "List active tags (auth)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/tags"
+					}
+				},
+				{
+					"name": "List all tags (developer)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{DWbaseUrl}}/workspace/tags/all"
+					}
+				},
+				{
+					"name": "Create tag (developer)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Urgente\"\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/tags"
+					}
+				},
+				{
+					"name": "Update tag (developer)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Urgencia alta\"\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/tags/{{tagId}}"
+					}
+				},
+				{
+					"name": "Set tag active flag (developer)",
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"active\": false\n}"
+						},
+						"url": "{{DWbaseUrl}}/workspace/tags/{{tagId}}/active"
+					}
+				}
+			]
+		}
+	]
+}
