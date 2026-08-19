@@ -9,7 +9,8 @@ import {
 	Post,
 } from '@nestjs/common';
 import { Auth } from '../../auth/decorators/auth.decorator';
-import { ValidRoles } from '../../auth/interfaces/valid-roles';
+import { GetUser } from '../../auth/decorators/get-user.decorator';
+import { User } from '../../auth/entities/user.entity';
 import { WorkModuleCreateDto } from '../dto/create-work-module.dto';
 import { ComponentCreateDto } from '../dto/create-component.dto';
 import { TagCreateDto } from '../dto/create-tag.dto';
@@ -19,127 +20,233 @@ import { ComponentUpdateDto } from '../dto/update-component.dto';
 import { TagUpdateDto } from '../dto/update-tag.dto';
 import { WorkspaceCatalogService } from '../services/workspace-catalog.service';
 
-@Controller('workspace')
+@Controller('organizations/:organizationId/workspace')
 export class WorkspaceCatalogController {
-	constructor(
-		private readonly workspaceCatalogService: WorkspaceCatalogService,
-	) { }
+	constructor(private readonly workspaceCatalogService: WorkspaceCatalogService) {}
 
 	@Get('modules')
 	@Auth()
-	findAllModules() {
-		return this.workspaceCatalogService.findAllModules(false);
+	findAllModules(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@GetUser() user: User,
+	) {
+		return this.workspaceCatalogService.findAllModules(
+			organizationId,
+			user.id,
+			false,
+		);
 	}
 
 	@Get('modules/all')
-	@Auth(ValidRoles.developer)
-	findAllModulesIncludingInactive() {
-		return this.workspaceCatalogService.findAllModules(true);
+	@Auth()
+	findAllModulesIncludingInactive(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@GetUser() user: User,
+	) {
+		return this.workspaceCatalogService.findAllModules(
+			organizationId,
+			user.id,
+			true,
+		);
 	}
 
 	@Get('modules/:id')
 	@Auth()
-	findModuleById(@Param('id', ParseUUIDPipe) id: string) {
-		return this.workspaceCatalogService.findModuleById(id, false);
+	findModuleById(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@Param('id', ParseUUIDPipe) id: string,
+		@GetUser() user: User,
+	) {
+		return this.workspaceCatalogService.findModuleById(
+			organizationId,
+			user.id,
+			id,
+			false,
+		);
 	}
 
 	@Get('modules/all/:id')
-	@Auth(ValidRoles.developer)
-	findModuleByIdIncludingInactive(@Param('id', ParseUUIDPipe) id: string) {
-		return this.workspaceCatalogService.findModuleById(id, true);
+	@Auth()
+	findModuleByIdIncludingInactive(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@Param('id', ParseUUIDPipe) id: string,
+		@GetUser() user: User,
+	) {
+		return this.workspaceCatalogService.findModuleById(
+			organizationId,
+			user.id,
+			id,
+			true,
+		);
 	}
 
 	@Post('modules')
-	@Auth(ValidRoles.developer)
-	createModule(@Body() dto: WorkModuleCreateDto) {
-		return this.workspaceCatalogService.createModule(dto);
+	@Auth()
+	createModule(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@Body() dto: WorkModuleCreateDto,
+		@GetUser() user: User,
+	) {
+		return this.workspaceCatalogService.createModule(organizationId, user.id, dto);
 	}
 
 	@Patch('modules/:id')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	updateModule(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Body() dto: WorkModuleUpdateDto,
+		@GetUser() user: User,
 	) {
-		return this.workspaceCatalogService.updateModule(id, dto);
+		return this.workspaceCatalogService.updateModule(
+			organizationId,
+			user.id,
+			id,
+			dto,
+		);
 	}
 
 	@Patch('modules/:id/active')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	setModuleActive(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Body() dto: SetActiveDto,
+		@GetUser() user: User,
 	) {
-		return this.workspaceCatalogService.setModuleActive(id, dto.active);
+		return this.workspaceCatalogService.setModuleActive(
+			organizationId,
+			user.id,
+			id,
+			dto.active,
+		);
 	}
 
 	@Get('components')
 	@Auth()
-	findAllComponents() {
-		return this.workspaceCatalogService.findAllComponents(false);
+	findAllComponents(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@GetUser() user: User,
+	) {
+		return this.workspaceCatalogService.findAllComponents(
+			organizationId,
+			user.id,
+			false,
+		);
 	}
 
 	@Get('components/all')
-	@Auth(ValidRoles.developer)
-	findAllComponentsIncludingInactive() {
-		return this.workspaceCatalogService.findAllComponents(true);
+	@Auth()
+	findAllComponentsIncludingInactive(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@GetUser() user: User,
+	) {
+		return this.workspaceCatalogService.findAllComponents(
+			organizationId,
+			user.id,
+			true,
+		);
 	}
 
 	@Get('components/:id')
 	@Auth()
-	findComponentById(@Param('id', ParseUUIDPipe) id: string) {
-		return this.workspaceCatalogService.findComponentById(id, false);
+	findComponentById(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@Param('id', ParseUUIDPipe) id: string,
+		@GetUser() user: User,
+	) {
+		return this.workspaceCatalogService.findComponentById(
+			organizationId,
+			user.id,
+			id,
+			false,
+		);
 	}
 
 	@Get('components/all/:id')
-	@Auth(ValidRoles.developer)
-	findComponentByIdIncludingInactive(@Param('id', ParseUUIDPipe) id: string) {
-		return this.workspaceCatalogService.findComponentById(id, true);
+	@Auth()
+	findComponentByIdIncludingInactive(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@Param('id', ParseUUIDPipe) id: string,
+		@GetUser() user: User,
+	) {
+		return this.workspaceCatalogService.findComponentById(
+			organizationId,
+			user.id,
+			id,
+			true,
+		);
 	}
 
 	@Post('components')
-	@Auth(ValidRoles.developer)
-	createComponent(@Body() dto: ComponentCreateDto) {
-		return this.workspaceCatalogService.createComponent(dto);
+	@Auth()
+	createComponent(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@Body() dto: ComponentCreateDto,
+		@GetUser() user: User,
+	) {
+		return this.workspaceCatalogService.createComponent(organizationId, user.id, dto);
 	}
 
 	@Patch('components/:id')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	updateComponent(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Body() dto: ComponentUpdateDto,
+		@GetUser() user: User,
 	) {
-		return this.workspaceCatalogService.updateComponent(id, dto);
+		return this.workspaceCatalogService.updateComponent(
+			organizationId,
+			user.id,
+			id,
+			dto,
+		);
 	}
 
 	@Patch('components/:id/active')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	setComponentActive(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Body() dto: SetActiveDto,
+		@GetUser() user: User,
 	) {
-		return this.workspaceCatalogService.setComponentActive(id, dto.active);
+		return this.workspaceCatalogService.setComponentActive(
+			organizationId,
+			user.id,
+			id,
+			dto.active,
+		);
 	}
 
 	@Post('modules/:moduleId/components/:componentId')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	addComponentToModule(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('moduleId', ParseUUIDPipe) moduleId: string,
 		@Param('componentId', ParseUUIDPipe) componentId: string,
+		@GetUser() user: User,
 	) {
 		return this.workspaceCatalogService.addComponentToModule(
+			organizationId,
+			user.id,
 			moduleId,
 			componentId,
 		);
 	}
 
 	@Delete('modules/:moduleId/components/:componentId')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	removeComponentFromModule(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('moduleId', ParseUUIDPipe) moduleId: string,
 		@Param('componentId', ParseUUIDPipe) componentId: string,
+		@GetUser() user: User,
 	) {
 		return this.workspaceCatalogService.removeComponentFromModule(
+			organizationId,
+			user.id,
 			moduleId,
 			componentId,
 		);
@@ -148,9 +255,13 @@ export class WorkspaceCatalogController {
 	@Get('modules/:moduleId/components')
 	@Auth()
 	getComponentsByModule(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('moduleId', ParseUUIDPipe) moduleId: string,
+		@GetUser() user: User,
 	) {
 		return this.workspaceCatalogService.getComponentsByModule(
+			organizationId,
+			user.id,
 			moduleId,
 			false,
 		);
@@ -159,9 +270,13 @@ export class WorkspaceCatalogController {
 	@Get('components/:componentId/modules')
 	@Auth()
 	getModulesByComponent(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('componentId', ParseUUIDPipe) componentId: string,
+		@GetUser() user: User,
 	) {
 		return this.workspaceCatalogService.getModulesByComponent(
+			organizationId,
+			user.id,
 			componentId,
 			false,
 		);
@@ -169,34 +284,56 @@ export class WorkspaceCatalogController {
 
 	@Get('tags')
 	@Auth()
-	findAllTags() {
-		return this.workspaceCatalogService.findAllTags(false);
+	findAllTags(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@GetUser() user: User,
+	) {
+		return this.workspaceCatalogService.findAllTags(organizationId, user.id, false);
 	}
 
 	@Get('tags/all')
-	@Auth(ValidRoles.developer)
-	findAllTagsIncludingInactive() {
-		return this.workspaceCatalogService.findAllTags(true);
+	@Auth()
+	findAllTagsIncludingInactive(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@GetUser() user: User,
+	) {
+		return this.workspaceCatalogService.findAllTags(organizationId, user.id, true);
 	}
 
 	@Post('tags')
-	@Auth(ValidRoles.developer)
-	createTag(@Body() dto: TagCreateDto) {
-		return this.workspaceCatalogService.createTag(dto);
+	@Auth()
+	createTag(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@Body() dto: TagCreateDto,
+		@GetUser() user: User,
+	) {
+		return this.workspaceCatalogService.createTag(organizationId, user.id, dto);
 	}
 
 	@Patch('tags/:id')
-	@Auth(ValidRoles.developer)
-	updateTag(@Param('id', ParseUUIDPipe) id: string, @Body() dto: TagUpdateDto) {
-		return this.workspaceCatalogService.updateTag(id, dto);
+	@Auth()
+	updateTag(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@Param('id', ParseUUIDPipe) id: string,
+		@Body() dto: TagUpdateDto,
+		@GetUser() user: User,
+	) {
+		return this.workspaceCatalogService.updateTag(organizationId, user.id, id, dto);
 	}
 
 	@Patch('tags/:id/active')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	setTagActive(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Body() dto: SetActiveDto,
+		@GetUser() user: User,
 	) {
-		return this.workspaceCatalogService.setTagActive(id, dto.active);
+		return this.workspaceCatalogService.setTagActive(
+			organizationId,
+			user.id,
+			id,
+			dto.active,
+		);
 	}
 }

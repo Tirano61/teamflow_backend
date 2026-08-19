@@ -17,7 +17,6 @@ import {
 import { Auth } from '../../auth/decorators/auth.decorator';
 import { GetUser } from '../../auth/decorators/get-user.decorator';
 import { User } from '../../auth/entities/user.entity';
-import { ValidRoles } from '../../auth/interfaces/valid-roles';
 import { DiscussionCreateDto } from '../dto/create-discussion.dto';
 import { DiscussionAssignmentsUpdateDto } from '../dto/update-discussion-assignments.dto';
 import { DiscussionStatusUpdateDto } from '../dto/update-discussion-status.dto';
@@ -26,19 +25,24 @@ import { DiscussionStatus } from '../enums/discussion-status.enum';
 import { DiscussionType } from '../enums/discussion-type.enum';
 import { DiscussionService } from '../services/discussion.service';
 
-@Controller('workspace')
+@Controller('organizations/:organizationId/workspace')
 export class DiscussionController {
-	constructor(private readonly discussionService: DiscussionService) { }
+	constructor(private readonly discussionService: DiscussionService) {}
 
 	@Post('discussions')
 	@Auth()
-	createDiscussion(@Body() dto: DiscussionCreateDto, @GetUser() user: User) {
-		return this.discussionService.createDiscussion(dto, user);
+	createDiscussion(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@Body() dto: DiscussionCreateDto,
+		@GetUser() user: User,
+	) {
+		return this.discussionService.createDiscussion(organizationId, dto, user);
 	}
 
 	@Get('discussions')
 	@Auth()
 	findDiscussions(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@GetUser() user: User,
 		@Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
 		@Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
@@ -58,6 +62,7 @@ export class DiscussionController {
 		unread?: boolean,
 	) {
 		return this.discussionService.findDiscussions(
+			organizationId,
 			{
 				page,
 				limit,
@@ -79,49 +84,60 @@ export class DiscussionController {
 	@Get('discussions/:id')
 	@Auth()
 	findDiscussionById(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@GetUser() user: User,
 	) {
-		return this.discussionService.findDiscussionByIdForUser(id, user);
+		return this.discussionService.findDiscussionByIdForUser(organizationId, id, user);
 	}
 
 	@Post('discussions/:id/read')
 	@Auth()
 	markDiscussionAsRead(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@GetUser() user: User,
 	) {
-		return this.discussionService.markDiscussionAsRead(id, user);
+		return this.discussionService.markDiscussionAsRead(organizationId, id, user);
 	}
 
 	@Patch('discussions/:id')
 	@Auth()
 	updateDiscussion(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Body() dto: DiscussionUpdateDto,
 		@GetUser() user: User,
 	) {
-		return this.discussionService.updateDiscussion(id, dto, user);
+		return this.discussionService.updateDiscussion(organizationId, id, dto, user);
 	}
 
 	@Patch('discussions/:id/status')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	updateDiscussionStatus(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Body() dto: DiscussionStatusUpdateDto,
 		@GetUser() user: User,
 	) {
-		return this.discussionService.updateDiscussionStatus(id, dto.status, user);
+		return this.discussionService.updateDiscussionStatus(
+			organizationId,
+			id,
+			dto.status,
+			user,
+		);
 	}
 
 	@Post('discussions/:id/assignments')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	addDiscussionAssignments(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Body() dto: DiscussionAssignmentsUpdateDto,
 		@GetUser() user: User,
 	) {
 		return this.discussionService.addDeveloperAssignments(
+			organizationId,
 			id,
 			dto.developerUserIds,
 			user,
@@ -129,13 +145,15 @@ export class DiscussionController {
 	}
 
 	@Put('discussions/:id/assignments')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	replaceDiscussionAssignments(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Body() dto: DiscussionAssignmentsUpdateDto,
 		@GetUser() user: User,
 	) {
 		return this.discussionService.replaceDeveloperAssignments(
+			organizationId,
 			id,
 			dto.developerUserIds,
 			user,
@@ -143,13 +161,15 @@ export class DiscussionController {
 	}
 
 	@Delete('discussions/:id/assignments/:developerUserId')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	removeDiscussionAssignment(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Param('developerUserId', ParseUUIDPipe) developerUserId: string,
 		@GetUser() user: User,
 	) {
 		return this.discussionService.removeDeveloperAssignment(
+			organizationId,
 			id,
 			developerUserId,
 			user,
@@ -158,7 +178,10 @@ export class DiscussionController {
 
 	@Get('developers')
 	@Auth()
-	findAssignableDevelopers() {
-		return this.discussionService.findAssignableDevelopers();
+	findAssignableDevelopers(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
+		@GetUser() user: User,
+	) {
+		return this.discussionService.findAssignableDevelopers(organizationId, user);
 	}
 }

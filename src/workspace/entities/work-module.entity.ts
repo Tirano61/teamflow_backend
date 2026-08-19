@@ -6,14 +6,29 @@ import {
   UpdateDateColumn,
   ManyToMany,
   JoinTable,
+  ManyToOne,
+  JoinColumn,
+  Index,
 } from 'typeorm';
 import { Discussion } from './discussion.entity';
 import { Component } from './component.entity';
+import { Organization } from '../../organizations/entities/organization.entity';
 
 @Entity('work_modules')
+@Index('idx_work_modules_organization_id', ['organizationId'])
 export class WorkModule {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
+
+  @Column({ name: 'organization_id', type: 'uuid' })
+  organizationId!: string;
+
+  @ManyToOne(() => Organization, (organization) => organization.workModules, {
+    nullable: false,
+    onDelete: 'CASCADE',
+  })
+  @JoinColumn({ name: 'organization_id' })
+  organization!: Organization;
 
   @Column({ length: 150 })
   name!: string;

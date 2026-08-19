@@ -8,7 +8,9 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { isUUID } from 'class-validator';
 import { User } from '../../auth/entities/user.entity';
-import { ValidRoles } from '../../auth/interfaces/valid-roles';
+import { Membership } from '../../memberships/entities/membership.entity';
+import { MembershipStatus } from '../../memberships/enums/membership-status.enum';
+import { OrganizationRole } from '../../memberships/enums/organization-role.enum';
 import { DiscussionCreateDto } from '../dto/create-discussion.dto';
 import { DiscussionUpdateDto } from '../dto/update-discussion.dto';
 import { Discussion } from '../entities/discussion.entity';
@@ -23,6 +25,7 @@ import { DiscussionStatus } from '../enums/discussion-status.enum';
 import { DiscussionMessageType } from '../enums/discussion-message-type.enum';
 import { WorkspaceNotificationService } from './workspace-notification.service';
 import { DataSource, EntityManager, In, Repository, SelectQueryBuilder } from 'typeorm';
+import { WorkspaceOrganizationAccessService } from './workspace-organization-access.service';
 
 @Injectable()
 export class DiscussionService {
@@ -31,11 +34,12 @@ export class DiscussionService {
 	constructor(
 		@InjectRepository(Discussion)
 		private readonly discussionRepository: Repository<Discussion>,
-		@InjectRepository(User)
-		private readonly userRepository: Repository<User>,
+		@InjectRepository(Membership)
+		private readonly membershipRepository: Repository<Membership>,
 		private readonly dataSource: DataSource,
 		private readonly workflowNotificationService: WorkspaceNotificationService,
-	) { }
+		private readonly orgAccessService: WorkspaceOrganizationAccessService,
+	) {}
 
 	private normalizeTitle(title: string): string {
 		const normalized = title.trim();
@@ -51,27 +55,23 @@ export class DiscussionService {
 		return normalized;
 	}
 
-	private isDeveloper(user: User): boolean {
-		return (user.roles ?? []).includes(ValidRoles.developer);
+	private assertCanManageDiscussion(membership: Membership): void {
+		this.orgAccessService.assertCanManageDiscussion(membership);
 	}
 
-	private assertCanEditDiscussion(user: User, discussion: Discussion): void {
+	private assertCanEditDiscussion(user: User, discussion: Discussion, membership: Membership): void {
 		const ownerId = discussion.createdBy?.id;
-		if (this.isDeveloper(user) || ownerId === user.id) return;
-		throw new ForbiddenException('You can only modify your own discussions');
-	}
+		if (ownerId === user.id) return;
 
-	private assertCanModifyDiscussionContext(user: User): void {
-		if (this.isDeveloper(user)) return;
-		throw new ForbiddenException(
-			'Only developers can modify discussion modules and components',
-		);
-	}
-
-	private assertCanAccessDiscussion(user: User): void {
-		if (!user?.id) {
-			throw new ForbiddenException('User not authenticated');
+		if (
+			membership.role === OrganizationRole.OWNER ||
+			membership.role === OrganizationRole.ADMIN ||
+			membership.role === OrganizationRole.DEVELOPER
+		) {
+			return;
 		}
+
+		throw new ForbiddenException('You can only modify your own discussions');
 	}
 
 	private parseIdsCsv(raw: string | undefined, fieldName: string): string[] {
@@ -97,15 +97,17 @@ export class DiscussionService {
 
 	private normalizePagination(page: number, limit: number) {
 		if (page < 1) throw new BadRequestException('page must be greater than 0');
-		if (limit < 1)
+		if (limit < 1) {
 			throw new BadRequestException('limit must be greater than 0');
+		}
 		return {
 			page,
 			limit: Math.min(limit, 100),
 		};
 	}
 
-	private async resolveEntitiesByIds<T extends { id: string }>(
+	private async resolveEntitiesByIds<T extends { id: string; organizationId: string }>(
+		organizationId: string,
 		ids: string[],
 		repository: Repository<T>,
 		entityName: string,
@@ -119,14 +121,13 @@ export class DiscussionService {
 
 		const entities = await repository.findBy({
 			id: In(uniqueIds),
+			organizationId,
 		} as unknown as Parameters<Repository<T>['findBy']>[0]);
 
 		if (entities.length !== uniqueIds.length) {
 			const foundIds = new Set(entities.map((entity) => entity.id));
 			const missingIds = uniqueIds.filter((id) => !foundIds.has(id));
-			throw new NotFoundException(
-				`${entityName} not found: ${missingIds.join(', ')}`,
-			);
+			throw new NotFoundException(`${entityName} not found: ${missingIds.join(', ')}`);
 		}
 
 		const mapById = new Map(entities.map((entity) => [entity.id, entity]));
@@ -134,17 +135,12 @@ export class DiscussionService {
 	}
 
 	private async findDiscussionWithRelations(
+		organizationId: string,
 		id: string,
 	): Promise<Discussion | null> {
 		return this.discussionRepository.findOne({
-			where: { id },
-			relations: [
-				'createdBy',
-				'workModules',
-				'components',
-				'tags',
-				'assignedDevelopers',
-			],
+			where: { id, organizationId },
+			relations: ['createdBy', 'workModules', 'components', 'tags', 'assignedDevelopers'],
 		});
 	}
 
@@ -203,6 +199,7 @@ export class DiscussionService {
 	}
 
 	private async findUnreadByDiscussionIds(
+		organizationId: string,
 		discussionIds: string[],
 		currentUserId: string,
 	): Promise<Map<string, boolean>> {
@@ -211,23 +208,20 @@ export class DiscussionService {
 		const queryBuilder = this.discussionRepository
 			.createQueryBuilder('discussion')
 			.select('discussion.id', 'id')
-			.where('discussion.id IN (:...discussionIds)', { discussionIds });
+			.where('discussion.organization_id = :organizationId', { organizationId })
+			.andWhere('discussion.id IN (:...discussionIds)', { discussionIds });
 
 		const unreadConditionSql = this.applyUnreadJoins(queryBuilder, currentUserId);
 
 		const rows = await queryBuilder
-			.addSelect(
-				`CASE WHEN ${unreadConditionSql} THEN true ELSE false END`,
-				'isUnread',
-			)
+			.addSelect(`CASE WHEN ${unreadConditionSql} THEN true ELSE false END`, 'isUnread')
 			.getRawMany<{ id: string; isUnread: boolean | string | number }>();
 
-		return new Map(
-			rows.map((row) => [row.id, this.parseRawBoolean(row.isUnread)]),
-		);
+		return new Map(rows.map((row) => [row.id, this.parseRawBoolean(row.isUnread)]));
 	}
 
 	async upsertDiscussionReadState(
+		organizationId: string,
 		discussionId: string,
 		userId: string,
 		manager?: EntityManager,
@@ -242,35 +236,33 @@ export class DiscussionService {
 					user_id,
 					last_read_at
 				)
-				VALUES ($1, $2, $3)
+				SELECT d.id, $2, $3
+				FROM public.discussions d
+				WHERE d.id = $1 AND d.organization_id = $4
 				ON CONFLICT (discussion_id, user_id)
 				DO UPDATE SET
 					last_read_at = GREATEST(discussion_read_states.last_read_at, EXCLUDED.last_read_at),
 					updated_at = now()
 			`,
-			[discussionId, userId, lastReadAt],
+			[discussionId, userId, lastReadAt, organizationId],
 		);
 	}
 
 	private sanitizeDiscussionAssignees(discussion: Discussion): Discussion {
 		discussion.assignedDevelopers = (discussion.assignedDevelopers ?? []).map(
 			(developer) =>
-			({
-				id: developer.id,
-				fullName: developer.fullName,
-				email: developer.email,
-			} as User),
+				({
+					id: developer.id,
+					fullName: developer.fullName,
+					email: developer.email,
+				} as User),
 		);
 
 		return discussion;
 	}
 
-	private sanitizeDiscussionListAssignees(
-		discussions: Discussion[],
-	): Discussion[] {
-		return discussions.map((discussion) =>
-			this.sanitizeDiscussionAssignees(discussion),
-		);
+	private sanitizeDiscussionListAssignees(discussions: Discussion[]): Discussion[] {
+		return discussions.map((discussion) => this.sanitizeDiscussionAssignees(discussion));
 	}
 
 	private hasDifferentEntityIds(
@@ -284,7 +276,10 @@ export class DiscussionService {
 		return [...currentIds].some((id) => !nextIds.has(id));
 	}
 
-	private async resolveAssignableDevelopersByIds(ids: string[]): Promise<User[]> {
+	private async resolveAssignableDevelopersByIds(
+		organizationId: string,
+		ids: string[],
+	): Promise<User[]> {
 		if (!ids.length) return [];
 
 		const uniqueIds = [...new Set(ids)];
@@ -292,31 +287,43 @@ export class DiscussionService {
 			throw new BadRequestException('developerUserIds contains duplicates');
 		}
 
-		const developers = await this.userRepository
-			.createQueryBuilder('user')
-			.where('user.id IN (:...ids)', { ids: uniqueIds })
-			.andWhere('user.isActive = true')
-			.andWhere(':developerRole = ANY(user.roles)', {
-				developerRole: ValidRoles.developer,
-			})
-			.getMany();
+		const memberships = await this.membershipRepository.find({
+			where: {
+				organization: { id: organizationId },
+				user: { id: In(uniqueIds) },
+			},
+			relations: ['user'],
+		});
 
-		if (developers.length !== uniqueIds.length) {
-			const foundIds = new Set(developers.map((developer) => developer.id));
-			const missingOrInvalid = uniqueIds.filter((id) => !foundIds.has(id));
+		if (memberships.length !== uniqueIds.length) {
+			const foundIds = new Set(memberships.map((membership) => membership.user.id));
+			const missing = uniqueIds.filter((id) => !foundIds.has(id));
 			throw new BadRequestException(
-				`Users not assignable as developers: ${missingOrInvalid.join(', ')}`,
+				`Users not assignable as developers: ${missing.join(', ')}`,
 			);
 		}
 
-		const mapById = new Map(developers.map((developer) => [developer.id, developer]));
-		return uniqueIds.map((id) => mapById.get(id)!);
+		const membershipByUserId = new Map(
+			memberships.map((membership) => [membership.user.id, membership]),
+		);
+
+		for (const userId of uniqueIds) {
+			const membership = membershipByUserId.get(userId)!;
+			if (membership.status !== MembershipStatus.ACTIVE) {
+				throw new BadRequestException(`Users not assignable as developers: ${userId}`);
+			}
+			this.orgAccessService.assertCanReceiveAssignments(membership);
+		}
+
+		return uniqueIds.map((id) => membershipByUserId.get(id)!.user);
 	}
 
 	async createDiscussion(
+		organizationId: string,
 		dto: DiscussionCreateDto,
 		user: User,
 	): Promise<Discussion> {
+		await this.orgAccessService.requireActiveMembership(user.id, organizationId);
 		const title = this.normalizeTitle(dto.title);
 		const initialMessageContent = this.normalizeInitialMessageContent(
 			dto.initialMessageContent,
@@ -330,20 +337,19 @@ export class DiscussionService {
 			const tagRepository = manager.getRepository(Tag);
 
 			const [workModules, components, tags] = await Promise.all([
+				this.resolveEntitiesByIds(organizationId, dto.moduleIds ?? [], workModuleRepository, 'Module'),
 				this.resolveEntitiesByIds(
-					dto.moduleIds ?? [],
-					workModuleRepository,
-					'Module',
-				),
-				this.resolveEntitiesByIds(
+					organizationId,
 					dto.componentIds ?? [],
 					componentRepository,
 					'Component',
 				),
-				this.resolveEntitiesByIds(dto.tagIds ?? [], tagRepository, 'Tag'),
+				this.resolveEntitiesByIds(organizationId, dto.tagIds ?? [], tagRepository, 'Tag'),
 			]);
 
 			const discussion = discussionRepository.create({
+				organizationId,
+				organization: { id: organizationId } as any,
 				type: dto.type,
 				title,
 				status: DiscussionStatus.NEW,
@@ -362,18 +368,15 @@ export class DiscussionService {
 				content: initialMessageContent,
 			});
 			await discussionMessageRepository.save(initialMessage);
-			await this.upsertDiscussionReadState(saved.id, user.id, manager);
+			await this.upsertDiscussionReadState(organizationId, saved.id, user.id, manager);
 
 			return saved.id;
 		});
 
-		const discussion = await this.findDiscussionByIdForUser(discussionId, user);
+		const discussion = await this.findDiscussionByIdForUser(organizationId, discussionId, user);
 
 		try {
-			await this.workflowNotificationService.notifyDiscussionCreated(
-				discussion,
-				user,
-			);
+			await this.workflowNotificationService.notifyDiscussionCreated(discussion, user);
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : 'unknown';
 			this.logger.warn(
@@ -385,17 +388,13 @@ export class DiscussionService {
 	}
 
 	async findDiscussions(
+		organizationId: string,
 		filters: DiscussionListFilters,
 		currentUser: User,
 	): Promise<DiscussionListResponse> {
-		const { page, limit } = this.normalizePagination(
-			filters.page,
-			filters.limit,
-		);
-		const moduleIds = this.parseIdsCsv(
-			filters.moduleIds,
-			'moduleIds',
-		);
+		await this.orgAccessService.requireActiveMembership(currentUser.id, organizationId);
+		const { page, limit } = this.normalizePagination(filters.page, filters.limit);
+		const moduleIds = this.parseIdsCsv(filters.moduleIds, 'moduleIds');
 		const componentIds = this.parseIdsCsv(filters.componentIds, 'componentIds');
 		const tagIds = this.parseIdsCsv(filters.tagIds, 'tagIds');
 
@@ -413,7 +412,8 @@ export class DiscussionService {
 			.leftJoin('discussion.workModules', 'moduleFilter')
 			.leftJoin('discussion.components', 'componentFilter')
 			.leftJoin('discussion.tags', 'tagFilter')
-			.leftJoin('discussion.assignedDevelopers', 'assignedDeveloperFilter');
+			.leftJoin('discussion.assignedDevelopers', 'assignedDeveloperFilter')
+			.where('discussion.organization_id = :organizationId', { organizationId });
 
 		const unreadConditionSql = this.applyUnreadJoins(queryBuilder, currentUser.id);
 
@@ -422,21 +422,15 @@ export class DiscussionService {
 		}
 
 		if (filters.status) {
-			queryBuilder.andWhere('discussion.status = :status', {
-				status: filters.status,
-			});
+			queryBuilder.andWhere('discussion.status = :status', { status: filters.status });
 		}
 
 		if (moduleIds.length > 0) {
-			queryBuilder.andWhere('moduleFilter.id IN (:...moduleIds)', {
-				moduleIds,
-			});
+			queryBuilder.andWhere('moduleFilter.id IN (:...moduleIds)', { moduleIds });
 		}
 
 		if (componentIds.length > 0) {
-			queryBuilder.andWhere('componentFilter.id IN (:...componentIds)', {
-				componentIds,
-			});
+			queryBuilder.andWhere('componentFilter.id IN (:...componentIds)', { componentIds });
 		}
 
 		if (tagIds.length > 0) {
@@ -458,32 +452,22 @@ export class DiscussionService {
 				assignedToMeUserId: currentUser.id,
 			});
 		} else if (filters.assignedDeveloperId) {
-			queryBuilder.andWhere(
-				'assignedDeveloperFilter.id = :assignedDeveloperId',
-				{
-					assignedDeveloperId: filters.assignedDeveloperId,
-				},
-			);
+			queryBuilder.andWhere('assignedDeveloperFilter.id = :assignedDeveloperId', {
+				assignedDeveloperId: filters.assignedDeveloperId,
+			});
 		}
 
 		if (filters.unread) {
 			queryBuilder.andWhere(unreadConditionSql);
 		}
 
-		const total = await queryBuilder
-			.clone()
-			.select('discussion.id')
-			.distinct(true)
-			.getCount();
+		const total = await queryBuilder.clone().select('discussion.id').distinct(true).getCount();
 
 		const discussionRows = await queryBuilder
 			.clone()
 			.select('discussion.id', 'id')
 			.addSelect('discussion.createdAt', 'createdAt')
-			.addSelect(
-				`CASE WHEN ${unreadConditionSql} THEN true ELSE false END`,
-				'isUnread',
-			)
+			.addSelect(`CASE WHEN ${unreadConditionSql} THEN true ELSE false END`, 'isUnread')
 			.distinct(true)
 			.orderBy('discussion.createdAt', 'DESC')
 			.addOrderBy('discussion.id', 'ASC')
@@ -497,26 +481,17 @@ export class DiscussionService {
 		);
 		const data = discussionIds.length
 			? await this.discussionRepository.find({
-				where: { id: In(discussionIds) },
-				relations: [
-					'createdBy',
-					'workModules',
-					'components',
-					'tags',
-					'assignedDevelopers',
-				],
-				order: { createdAt: 'DESC' },
-			})
+					where: { id: In(discussionIds), organizationId },
+					relations: ['createdBy', 'workModules', 'components', 'tags', 'assignedDevelopers'],
+					order: { createdAt: 'DESC' },
+			  })
 			: [];
 
 		const dataById = new Map(data.map((discussion) => [discussion.id, discussion]));
 		const orderedData = discussionIds
 			.map((discussionId) => dataById.get(discussionId))
 			.filter((discussion): discussion is Discussion => Boolean(discussion));
-		const hydratedData = this.attachUnreadFlags(
-			orderedData,
-			unreadByDiscussionId,
-		);
+		const hydratedData = this.attachUnreadFlags(orderedData, unreadByDiscussionId);
 
 		return {
 			data: this.sanitizeDiscussionListAssignees(hydratedData),
@@ -527,16 +502,21 @@ export class DiscussionService {
 		};
 	}
 
-	async findDiscussionById(id: string): Promise<Discussion> {
-		const discussion = await this.findDiscussionWithRelations(id);
+	async findDiscussionById(organizationId: string, id: string): Promise<Discussion> {
+		const discussion = await this.findDiscussionWithRelations(organizationId, id);
 		if (!discussion) throw new NotFoundException('Discussion not found');
 		return this.sanitizeDiscussionAssignees(discussion);
 	}
 
-	async findDiscussionByIdForUser(id: string, user: User): Promise<Discussion> {
-		const discussion = await this.findDiscussionById(id);
-		this.assertCanAccessDiscussion(user);
+	async findDiscussionByIdForUser(
+		organizationId: string,
+		id: string,
+		user: User,
+	): Promise<Discussion> {
+		await this.orgAccessService.requireActiveMembership(user.id, organizationId);
+		const discussion = await this.findDiscussionById(organizationId, id);
 		const unreadByDiscussionId = await this.findUnreadByDiscussionIds(
+			organizationId,
 			[id],
 			user.id,
 		);
@@ -545,12 +525,13 @@ export class DiscussionService {
 	}
 
 	async markDiscussionAsRead(
+		organizationId: string,
 		discussionId: string,
 		user: User,
 	): Promise<{ discussionId: string; lastReadAt: string; isUnread: false }> {
-		await this.findDiscussionByIdForUser(discussionId, user);
+		await this.findDiscussionByIdForUser(organizationId, discussionId, user);
 		const lastReadAt = new Date();
-		await this.upsertDiscussionReadState(discussionId, user.id, undefined, lastReadAt);
+		await this.upsertDiscussionReadState(organizationId, discussionId, user.id, undefined, lastReadAt);
 
 		return {
 			discussionId,
@@ -560,11 +541,13 @@ export class DiscussionService {
 	}
 
 	async updateDiscussion(
+		organizationId: string,
 		id: string,
 		dto: DiscussionUpdateDto,
 		user: User,
 	): Promise<Discussion> {
 		let didChangeContext = false;
+		const membership = await this.orgAccessService.requireActiveMembership(user.id, organizationId);
 
 		const discussionId = await this.dataSource.transaction(async (manager) => {
 			const discussionRepository = manager.getRepository(Discussion);
@@ -573,12 +556,12 @@ export class DiscussionService {
 			const tagRepository = manager.getRepository(Tag);
 
 			const discussion = await discussionRepository.findOne({
-				where: { id },
+				where: { id, organizationId },
 				relations: ['createdBy', 'workModules', 'components', 'tags'],
 			});
 
 			if (!discussion) throw new NotFoundException('Discussion not found');
-			this.assertCanEditDiscussion(user, discussion);
+			this.assertCanEditDiscussion(user, discussion, membership);
 
 			if (dto.title !== undefined) {
 				discussion.title = this.normalizeTitle(dto.title);
@@ -588,51 +571,54 @@ export class DiscussionService {
 				discussion.type = dto.type;
 			}
 
-			if (dto.moduleIds !== undefined || dto.componentIds !== undefined) {
-				this.assertCanModifyDiscussionContext(user);
+			if (dto.moduleIds !== undefined || dto.componentIds !== undefined || dto.tagIds !== undefined) {
+				this.assertCanManageDiscussion(membership);
 			}
 
 			if (dto.moduleIds !== undefined) {
 				const nextModules = await this.resolveEntitiesByIds(
+					organizationId,
 					dto.moduleIds,
 					workModuleRepository,
 					'Module',
 				);
 				didChangeContext =
-					didChangeContext ||
-					this.hasDifferentEntityIds(discussion.workModules, nextModules);
+					didChangeContext || this.hasDifferentEntityIds(discussion.workModules, nextModules);
 				discussion.workModules = nextModules;
 			}
 
 			if (dto.componentIds !== undefined) {
 				const nextComponents = await this.resolveEntitiesByIds(
+					organizationId,
 					dto.componentIds,
 					componentRepository,
 					'Component',
 				);
 				didChangeContext =
-					didChangeContext ||
-					this.hasDifferentEntityIds(discussion.components, nextComponents);
+					didChangeContext || this.hasDifferentEntityIds(discussion.components, nextComponents);
 				discussion.components = nextComponents;
 			}
 
 			if (dto.tagIds !== undefined) {
 				discussion.tags = await this.resolveEntitiesByIds(
+					organizationId,
 					dto.tagIds,
 					tagRepository,
 					'Tag',
 				);
+				didChangeContext = true;
 			}
 
 			await discussionRepository.save(discussion);
 			return discussion.id;
 		});
 
-		const updatedDiscussion = await this.findDiscussionById(discussionId);
+		const updatedDiscussion = await this.findDiscussionById(organizationId, discussionId);
 
 		if (didChangeContext) {
 			try {
 				await this.workflowNotificationService.syncDiscussionContextChanged(
+					organizationId,
 					discussionId,
 					user,
 				);
@@ -648,27 +634,26 @@ export class DiscussionService {
 	}
 
 	async updateDiscussionStatus(
+		organizationId: string,
 		id: string,
 		status: DiscussionStatus,
 		user: User,
 	): Promise<Discussion> {
-		if (!this.isDeveloper(user)) {
-			throw new ForbiddenException('Only developers can change discussion status');
-		}
+		const membership = await this.orgAccessService.requireActiveMembership(user.id, organizationId);
+		this.assertCanManageDiscussion(membership);
 
-		const discussion = await this.discussionRepository.findOne({ where: { id } });
+		const discussion = await this.discussionRepository.findOne({
+			where: { id, organizationId },
+		});
 		if (!discussion) throw new NotFoundException('Discussion not found');
 
 		discussion.status = status;
 		await this.discussionRepository.save(discussion);
 
-		const updatedDiscussion = await this.findDiscussionById(id);
+		const updatedDiscussion = await this.findDiscussionById(organizationId, id);
 
 		try {
-			await this.workflowNotificationService.notifyDiscussionStatusChanged(
-				updatedDiscussion,
-				user,
-			);
+			await this.workflowNotificationService.notifyDiscussionStatusChanged(updatedDiscussion, user);
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : 'unknown';
 			this.logger.warn(
@@ -680,14 +665,19 @@ export class DiscussionService {
 	}
 
 	async addDeveloperAssignments(
+		organizationId: string,
 		discussionId: string,
 		developerUserIds: string[],
 		actor: User,
 	): Promise<Discussion> {
-		const discussion = await this.findDiscussionWithRelations(discussionId);
+		const membership = await this.orgAccessService.requireActiveMembership(actor.id, organizationId);
+		this.assertCanManageDiscussion(membership);
+
+		const discussion = await this.findDiscussionWithRelations(organizationId, discussionId);
 		if (!discussion) throw new NotFoundException('Discussion not found');
 
 		const developersToAdd = await this.resolveAssignableDevelopersByIds(
+			organizationId,
 			developerUserIds,
 		);
 
@@ -695,24 +685,16 @@ export class DiscussionService {
 			(discussion.assignedDevelopers ?? []).map((developer) => developer.id),
 		);
 
-		const newDevelopers = developersToAdd.filter(
-			(developer) => !existingById.has(developer.id),
-		);
+		const newDevelopers = developersToAdd.filter((developer) => !existingById.has(developer.id));
 
-		discussion.assignedDevelopers = [
-			...(discussion.assignedDevelopers ?? []),
-			...newDevelopers,
-		];
+		discussion.assignedDevelopers = [...(discussion.assignedDevelopers ?? []), ...newDevelopers];
 
 		await this.discussionRepository.save(discussion);
-		const updatedDiscussion = await this.findDiscussionById(discussionId);
+		const updatedDiscussion = await this.findDiscussionById(organizationId, discussionId);
 
 		if (newDevelopers.length > 0) {
 			try {
-				await this.workflowNotificationService.notifyDiscussionAssignmentChanged(
-					updatedDiscussion,
-					actor,
-				);
+				await this.workflowNotificationService.notifyDiscussionAssignmentChanged(updatedDiscussion, actor);
 			} catch (error) {
 				const reason = error instanceof Error ? error.message : 'unknown';
 				this.logger.warn(
@@ -725,17 +707,22 @@ export class DiscussionService {
 	}
 
 	async replaceDeveloperAssignments(
+		organizationId: string,
 		discussionId: string,
 		developerUserIds: string[],
 		actor: User,
 	): Promise<Discussion> {
-		const discussion = await this.findDiscussionWithRelations(discussionId);
+		const membership = await this.orgAccessService.requireActiveMembership(actor.id, organizationId);
+		this.assertCanManageDiscussion(membership);
+
+		const discussion = await this.findDiscussionWithRelations(organizationId, discussionId);
 		if (!discussion) throw new NotFoundException('Discussion not found');
 		const previousDeveloperIds = new Set(
 			(discussion.assignedDevelopers ?? []).map((developer) => developer.id),
 		);
 
 		const nextDevelopers = await this.resolveAssignableDevelopersByIds(
+			organizationId,
 			developerUserIds,
 		);
 		discussion.assignedDevelopers = nextDevelopers;
@@ -746,14 +733,11 @@ export class DiscussionService {
 			previousDeveloperIds.size !== nextDeveloperIds.size ||
 			[...previousDeveloperIds].some((developerId) => !nextDeveloperIds.has(developerId));
 
-		const updatedDiscussion = await this.findDiscussionById(discussionId);
+		const updatedDiscussion = await this.findDiscussionById(organizationId, discussionId);
 
 		if (didChange) {
 			try {
-				await this.workflowNotificationService.notifyDiscussionAssignmentChanged(
-					updatedDiscussion,
-					actor,
-				);
+				await this.workflowNotificationService.notifyDiscussionAssignmentChanged(updatedDiscussion, actor);
 			} catch (error) {
 				const reason = error instanceof Error ? error.message : 'unknown';
 				this.logger.warn(
@@ -766,11 +750,15 @@ export class DiscussionService {
 	}
 
 	async removeDeveloperAssignment(
+		organizationId: string,
 		discussionId: string,
 		developerUserId: string,
 		actor: User,
 	): Promise<Discussion> {
-		const discussion = await this.findDiscussionWithRelations(discussionId);
+		const membership = await this.orgAccessService.requireActiveMembership(actor.id, organizationId);
+		this.assertCanManageDiscussion(membership);
+
+		const discussion = await this.findDiscussionWithRelations(organizationId, discussionId);
 		if (!discussion) throw new NotFoundException('Discussion not found');
 
 		const hasAssignment = (discussion.assignedDevelopers ?? []).some(
@@ -786,13 +774,10 @@ export class DiscussionService {
 		);
 
 		await this.discussionRepository.save(discussion);
-		const updatedDiscussion = await this.findDiscussionById(discussionId);
+		const updatedDiscussion = await this.findDiscussionById(organizationId, discussionId);
 
 		try {
-			await this.workflowNotificationService.notifyDiscussionAssignmentChanged(
-				updatedDiscussion,
-				actor,
-			);
+			await this.workflowNotificationService.notifyDiscussionAssignmentChanged(updatedDiscussion, actor);
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : 'unknown';
 			this.logger.warn(
@@ -803,24 +788,36 @@ export class DiscussionService {
 		return updatedDiscussion;
 	}
 
-	async findAssignableDevelopers(): Promise<
-		Array<{ id: string; fullName: string; email: string }>
-	> {
-		const developers = await this.userRepository
-			.createQueryBuilder('user')
-			.select(['user.id', 'user.fullName', 'user.email'])
-			.where('user.isActive = true')
-			.andWhere(':developerRole = ANY(user.roles)', {
-				developerRole: ValidRoles.developer,
-			})
-			.orderBy('user.fullName', 'ASC')
-			.addOrderBy('user.id', 'ASC')
-			.getMany();
+	async findAssignableDevelopers(
+		organizationId: string,
+		user: User,
+	): Promise<Array<{ id: string; fullName: string; email: string }>> {
+		await this.orgAccessService.requireActiveMembership(user.id, organizationId);
+		const memberships = await this.membershipRepository.find({
+			where: {
+				organization: { id: organizationId },
+			},
+			relations: ['user'],
+			order: { createdAt: 'ASC' },
+		});
 
-		return developers.map((developer) => ({
-			id: developer.id,
-			fullName: developer.fullName,
-			email: developer.email,
-		}));
+		const users = memberships
+			.filter((membership) => membership.status === MembershipStatus.ACTIVE)
+			.filter((membership) =>
+				[
+					OrganizationRole.DEVELOPER,
+					OrganizationRole.ADMIN,
+					OrganizationRole.OWNER,
+				].includes(membership.role),
+			)
+			.filter((membership) => membership.user.isActive)
+			.map((membership) => ({
+				id: membership.user.id,
+				fullName: membership.user.fullName,
+				email: membership.user.email,
+			}));
+
+		users.sort((a, b) => a.fullName.localeCompare(b.fullName));
+		return users;
 	}
 }

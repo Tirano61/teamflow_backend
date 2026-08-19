@@ -35,18 +35,20 @@ const MAX_FILE_SIZE_BYTES =
 		? configuredMaxFileSize
 		: DEFAULT_MAX_FILE_SIZE_BYTES;
 
-@Controller('workspace')
+@Controller('organizations/:organizationId/workspace')
 export class DiscussionMessageController {
-	constructor(private readonly discussionMessageService: DiscussionMessageService) { }
+	constructor(private readonly discussionMessageService: DiscussionMessageService) {}
 
 	@Post('discussions/:discussionId/messages')
 	@Auth()
 	createDiscussionMessage(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('discussionId', ParseUUIDPipe) discussionId: string,
 		@Body() dto: DiscussionMessageCreateDto,
 		@GetUser() user: User,
 	) {
 		return this.discussionMessageService.createDiscussionMessage(
+			organizationId,
 			discussionId,
 			dto,
 			user,
@@ -64,12 +66,14 @@ export class DiscussionMessageController {
 		}),
 	)
 	createDiscussionAttachmentMessage(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('discussionId', ParseUUIDPipe) discussionId: string,
 		@Body() dto: DiscussionAttachmentCreateDto,
 		@UploadedFile() file: Express.Multer.File,
 		@GetUser() user: User,
 	) {
 		return this.discussionMessageService.createDiscussionAttachmentMessage(
+			organizationId,
 			discussionId,
 			dto,
 			file,
@@ -85,17 +89,16 @@ export class DiscussionMessageController {
 	@Get('discussions/:discussionId/messages')
 	@Auth()
 	findDiscussionMessages(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('discussionId', ParseUUIDPipe) discussionId: string,
 		@GetUser() user: User,
 		@Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
 		@Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
-		@Query(
-			'type',
-			new ParseEnumPipe(DiscussionMessageType, { optional: true }),
-		)
+		@Query('type', new ParseEnumPipe(DiscussionMessageType, { optional: true }))
 		type?: DiscussionMessageType,
 	) {
 		return this.discussionMessageService.findDiscussionMessages(
+			organizationId,
 			discussionId,
 			page,
 			limit,
@@ -107,12 +110,14 @@ export class DiscussionMessageController {
 	@Patch('discussions/:discussionId/messages/:messageId')
 	@Auth()
 	updateDiscussionMessage(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('discussionId', ParseUUIDPipe) discussionId: string,
 		@Param('messageId', ParseUUIDPipe) messageId: string,
 		@Body() dto: DiscussionMessageUpdateDto,
 		@GetUser() user: User,
 	) {
 		return this.discussionMessageService.updateDiscussionMessage(
+			organizationId,
 			discussionId,
 			messageId,
 			dto,
@@ -123,11 +128,13 @@ export class DiscussionMessageController {
 	@Delete('discussions/:discussionId/messages/:messageId')
 	@Auth()
 	deleteDiscussionMessage(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('discussionId', ParseUUIDPipe) discussionId: string,
 		@Param('messageId', ParseUUIDPipe) messageId: string,
 		@GetUser() user: User,
 	) {
 		return this.discussionMessageService.deleteDiscussionMessage(
+			organizationId,
 			discussionId,
 			messageId,
 			user,

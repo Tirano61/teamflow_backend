@@ -10,6 +10,7 @@ import { TagUpdateDto } from '../dto/update-tag.dto';
 import { WorkModule } from '../entities/work-module.entity';
 import { Component } from '../entities/component.entity';
 import { Tag } from '../entities/tag.entity';
+import { WorkspaceOrganizationAccessService } from './workspace-organization-access.service';
 
 @Injectable()
 export class WorkspaceCatalogService {
@@ -20,22 +21,40 @@ export class WorkspaceCatalogService {
 		private readonly componentRepository: Repository<Component>,
 		@InjectRepository(Tag)
 		private readonly tagRepository: Repository<Tag>,
-	) { }
+		private readonly orgAccessService: WorkspaceOrganizationAccessService,
+	) {}
 
-	private normalizeName(name: string): string {
-		const normalized = name.trim();
-		if (!normalized) throw new BadRequestException('Name cannot be empty');
-		return normalized;
+	private normalizeName(name: string): { display: string; normalized: string } {
+		const display = name.trim();
+		if (!display) throw new BadRequestException('Name cannot be empty');
+		return { display, normalized: display.toLocaleLowerCase() };
 	}
 
-	async createModule(dto: WorkModuleCreateDto): Promise<WorkModule> {
-		const name = this.normalizeName(dto.name);
+	private async requireActiveMembership(userId: string, organizationId: string) {
+		return this.orgAccessService.requireActiveMembership(userId, organizationId);
+	}
+
+	private async requireCatalogManagement(userId: string, organizationId: string) {
+		const membership = await this.requireActiveMembership(userId, organizationId);
+		this.orgAccessService.assertCanManageCatalog(membership);
+		return membership;
+	}
+
+	async createModule(
+		organizationId: string,
+		userId: string,
+		dto: WorkModuleCreateDto,
+	): Promise<WorkModule> {
+		await this.requireCatalogManagement(userId, organizationId);
+		const name = this.normalizeName(dto.name).display;
 		const existing = await this.workModuleRepository.findOne({
-			where: { name: ILike(name) },
+			where: { organizationId, name: ILike(name) },
 		});
 		if (existing) throw new BadRequestException('Module already exists');
 
 		const entity = this.workModuleRepository.create({
+			organizationId,
+			organization: { id: organizationId } as any,
 			name,
 			description: dto.description,
 			active: true,
@@ -45,10 +64,15 @@ export class WorkspaceCatalogService {
 	}
 
 	async findModuleById(
+		organizationId: string,
+		userId: string,
 		id: string,
 		includeInactive = false,
 	): Promise<WorkModule> {
-		const where = includeInactive ? { id } : { id, active: true };
+		await this.requireActiveMembership(userId, organizationId);
+		const where = includeInactive
+			? { id, organizationId }
+			: { id, organizationId, active: true };
 		const module = await this.workModuleRepository.findOne({
 			where,
 			relations: ['components'],
@@ -57,8 +81,15 @@ export class WorkspaceCatalogService {
 		return module;
 	}
 
-	async findAllModules(includeInactive = false): Promise<WorkModule[]> {
-		const where = includeInactive ? {} : { active: true };
+	async findAllModules(
+		organizationId: string,
+		userId: string,
+		includeInactive = false,
+	): Promise<WorkModule[]> {
+		await this.requireActiveMembership(userId, organizationId);
+		const where = includeInactive
+			? { organizationId }
+			: { organizationId, active: true };
 		return this.workModuleRepository.find({
 			where,
 			order: { createdAt: 'DESC' },
@@ -67,57 +98,62 @@ export class WorkspaceCatalogService {
 	}
 
 	async updateModule(
+		organizationId: string,
+		userId: string,
 		id: string,
 		dto: WorkModuleUpdateDto,
 	): Promise<WorkModule> {
+		await this.requireCatalogManagement(userId, organizationId);
 		const module = await this.workModuleRepository.findOne({
-			where: { id },
+			where: { id, organizationId },
 		});
 		if (!module) throw new NotFoundException('Module not found');
 
 		if (dto.name) {
-			const normalizedName = this.normalizeName(dto.name);
+			const normalizedName = this.normalizeName(dto.name).display;
 			const existing = await this.workModuleRepository.findOne({
-				where: { name: ILike(normalizedName) },
+				where: { organizationId, name: ILike(normalizedName) },
 			});
 			if (existing && existing.id !== id)
 				throw new BadRequestException('Module already exists');
 			module.name = normalizedName;
 		}
 
-		if (dto.description !== undefined)
-			module.description = dto.description;
+		if (dto.description !== undefined) module.description = dto.description;
 
 		return this.workModuleRepository.save(module);
 	}
 
 	async setModuleActive(
+		organizationId: string,
+		userId: string,
 		id: string,
 		active: boolean,
 	): Promise<WorkModule> {
+		await this.requireCatalogManagement(userId, organizationId);
 		const module = await this.workModuleRepository.findOne({
-			where: { id },
+			where: { id, organizationId },
 		});
 		if (!module) throw new NotFoundException('Module not found');
 		module.active = active;
 		return this.workModuleRepository.save(module);
 	}
 
-	async findModuleByName(name: string): Promise<WorkModule | null> {
-		return this.workModuleRepository.findOne({
-			where: { name: ILike(this.normalizeName(name)) },
-			relations: ['components'],
-		});
-	}
-
-	async createComponent(dto: ComponentCreateDto): Promise<Component> {
-		const name = this.normalizeName(dto.name);
+	async createComponent(
+		organizationId: string,
+		userId: string,
+		dto: ComponentCreateDto,
+	): Promise<Component> {
+		await this.requireCatalogManagement(userId, organizationId);
+		const name = this.normalizeName(dto.name).display;
 		const existing = await this.componentRepository.findOne({
-			where: { name: ILike(name) },
+			where: { organizationId, name: ILike(name) },
 		});
 		if (existing) throw new BadRequestException('Component already exists');
 
 		const entity = this.componentRepository.create({
+			organizationId,
+			organization: { id: organizationId } as any,
 			name,
 			description: dto.description,
 			active: true,
@@ -127,10 +163,15 @@ export class WorkspaceCatalogService {
 	}
 
 	async findComponentById(
+		organizationId: string,
+		userId: string,
 		id: string,
 		includeInactive = false,
 	): Promise<Component> {
-		const where = includeInactive ? { id } : { id, active: true };
+		await this.requireActiveMembership(userId, organizationId);
+		const where = includeInactive
+			? { id, organizationId }
+			: { id, organizationId, active: true };
 		const component = await this.componentRepository.findOne({
 			where,
 			relations: ['workModules'],
@@ -139,8 +180,15 @@ export class WorkspaceCatalogService {
 		return component;
 	}
 
-	async findAllComponents(includeInactive = false): Promise<Component[]> {
-		const where = includeInactive ? {} : { active: true };
+	async findAllComponents(
+		organizationId: string,
+		userId: string,
+		includeInactive = false,
+	): Promise<Component[]> {
+		await this.requireActiveMembership(userId, organizationId);
+		const where = includeInactive
+			? { organizationId }
+			: { organizationId, active: true };
 		return this.componentRepository.find({
 			where,
 			order: { createdAt: 'DESC' },
@@ -149,16 +197,21 @@ export class WorkspaceCatalogService {
 	}
 
 	async updateComponent(
+		organizationId: string,
+		userId: string,
 		id: string,
 		dto: ComponentUpdateDto,
 	): Promise<Component> {
-		const component = await this.componentRepository.findOne({ where: { id } });
+		await this.requireCatalogManagement(userId, organizationId);
+		const component = await this.componentRepository.findOne({
+			where: { id, organizationId },
+		});
 		if (!component) throw new NotFoundException('Component not found');
 
 		if (dto.name) {
-			const normalizedName = this.normalizeName(dto.name);
+			const normalizedName = this.normalizeName(dto.name).display;
 			const existing = await this.componentRepository.findOne({
-				where: { name: ILike(normalizedName) },
+				where: { organizationId, name: ILike(normalizedName) },
 			});
 			if (existing && existing.id !== id)
 				throw new BadRequestException('Component already exists');
@@ -170,53 +223,63 @@ export class WorkspaceCatalogService {
 		return this.componentRepository.save(component);
 	}
 
-	async setComponentActive(id: string, active: boolean): Promise<Component> {
-		const component = await this.componentRepository.findOne({ where: { id } });
+	async setComponentActive(
+		organizationId: string,
+		userId: string,
+		id: string,
+		active: boolean,
+	): Promise<Component> {
+		await this.requireCatalogManagement(userId, organizationId);
+		const component = await this.componentRepository.findOne({
+			where: { id, organizationId },
+		});
 		if (!component) throw new NotFoundException('Component not found');
 		component.active = active;
 		return this.componentRepository.save(component);
 	}
 
-	async findComponentByName(name: string): Promise<Component | null> {
-		return this.componentRepository.findOne({
-			where: { name: ILike(this.normalizeName(name)) },
-			relations: ['workModules'],
-		});
-	}
-
 	async addComponentToModule(
+		organizationId: string,
+		userId: string,
 		moduleId: string,
 		componentId: string,
 	): Promise<WorkModule> {
+		await this.requireCatalogManagement(userId, organizationId);
 		const module = await this.workModuleRepository.findOne({
-			where: { id: moduleId },
+			where: { id: moduleId, organizationId },
 			relations: ['components'],
 		});
 		if (!module) throw new NotFoundException('Module not found');
 
 		const component = await this.componentRepository.findOne({
-			where: { id: componentId },
+			where: { id: componentId, organizationId },
 		});
 		if (!component) throw new NotFoundException('Component not found');
+
+		if (module.organizationId !== component.organizationId) {
+			throw new BadRequestException('Module and component must belong to the same organization');
+		}
 
 		const alreadyRelated = (module.components ?? []).some(
 			(item) => item.id === component.id,
 		);
-		if (alreadyRelated)
-			throw new BadRequestException(
-				'Module and component relation already exists',
-			);
+		if (alreadyRelated) {
+			throw new BadRequestException('Module and component relation already exists');
+		}
 
 		module.components = [...(module.components ?? []), component];
 		return this.workModuleRepository.save(module);
 	}
 
 	async removeComponentFromModule(
+		organizationId: string,
+		userId: string,
 		moduleId: string,
 		componentId: string,
 	): Promise<WorkModule> {
+		await this.requireCatalogManagement(userId, organizationId);
 		const module = await this.workModuleRepository.findOne({
-			where: { id: moduleId },
+			where: { id: moduleId, organizationId },
 			relations: ['components'],
 		});
 		if (!module) throw new NotFoundException('Module not found');
@@ -224,10 +287,9 @@ export class WorkspaceCatalogService {
 		const hasRelation = (module.components ?? []).some(
 			(item) => item.id === componentId,
 		);
-		if (!hasRelation)
-			throw new NotFoundException(
-				'Module and component relation not found',
-			);
+		if (!hasRelation) {
+			throw new NotFoundException('Module and component relation not found');
+		}
 
 		module.components = (module.components ?? []).filter(
 			(item) => item.id !== componentId,
@@ -236,11 +298,14 @@ export class WorkspaceCatalogService {
 	}
 
 	async getComponentsByModule(
+		organizationId: string,
+		userId: string,
 		moduleId: string,
 		includeInactive = false,
 	): Promise<Component[]> {
+		await this.requireActiveMembership(userId, organizationId);
 		const module = await this.workModuleRepository.findOne({
-			where: { id: moduleId },
+			where: { id: moduleId, organizationId },
 			relations: ['components'],
 		});
 		if (!module) throw new NotFoundException('Module not found');
@@ -249,11 +314,14 @@ export class WorkspaceCatalogService {
 	}
 
 	async getModulesByComponent(
+		organizationId: string,
+		userId: string,
 		componentId: string,
 		includeInactive = false,
 	): Promise<WorkModule[]> {
+		await this.requireActiveMembership(userId, organizationId);
 		const component = await this.componentRepository.findOne({
-			where: { id: componentId },
+			where: { id: componentId, organizationId },
 			relations: ['workModules'],
 		});
 		if (!component) throw new NotFoundException('Component not found');
@@ -261,49 +329,81 @@ export class WorkspaceCatalogService {
 		return (component.workModules ?? []).filter((item) => item.active);
 	}
 
-	async findAllTags(includeInactive = false): Promise<Tag[]> {
-		const where = includeInactive ? {} : { active: true };
+	async findAllTags(
+		organizationId: string,
+		userId: string,
+		includeInactive = false,
+	): Promise<Tag[]> {
+		await this.requireActiveMembership(userId, organizationId);
+		const where = includeInactive
+			? { organizationId }
+			: { organizationId, active: true };
 		return this.tagRepository.find({
 			where,
 			order: { createdAt: 'DESC' },
 		});
 	}
 
-	async createTag(dto: TagCreateDto): Promise<Tag> {
-		const name = this.normalizeName(dto.name);
+	async createTag(
+		organizationId: string,
+		userId: string,
+		dto: TagCreateDto,
+	): Promise<Tag> {
+		await this.requireCatalogManagement(userId, organizationId);
+		const { display, normalized } = this.normalizeName(dto.name);
 		const existing = await this.tagRepository.findOne({
-			where: { name: ILike(name) },
+			where: { organizationId, normalizedName: normalized },
 		});
 		if (existing) throw new BadRequestException('Tag already exists');
 
 		const tag = this.tagRepository.create({
-			name,
+			organizationId,
+			organization: { id: organizationId } as any,
+			name: display,
+			normalizedName: normalized,
 			active: true,
 		});
 
 		return this.tagRepository.save(tag);
 	}
 
-	async updateTag(id: string, dto: TagUpdateDto): Promise<Tag> {
-		const tag = await this.tagRepository.findOne({ where: { id } });
+	async updateTag(
+		organizationId: string,
+		userId: string,
+		id: string,
+		dto: TagUpdateDto,
+	): Promise<Tag> {
+		await this.requireCatalogManagement(userId, organizationId);
+		const tag = await this.tagRepository.findOne({
+			where: { id, organizationId },
+		});
 		if (!tag) throw new NotFoundException('Tag not found');
 
 		if (dto.name !== undefined) {
-			const normalizedName = this.normalizeName(dto.name);
+			const { display, normalized } = this.normalizeName(dto.name);
 			const existing = await this.tagRepository.findOne({
-				where: { name: ILike(normalizedName) },
+				where: { organizationId, normalizedName: normalized },
 			});
 			if (existing && existing.id !== id) {
 				throw new BadRequestException('Tag already exists');
 			}
-			tag.name = normalizedName;
+			tag.name = display;
+			tag.normalizedName = normalized;
 		}
 
 		return this.tagRepository.save(tag);
 	}
 
-	async setTagActive(id: string, active: boolean): Promise<Tag> {
-		const tag = await this.tagRepository.findOne({ where: { id } });
+	async setTagActive(
+		organizationId: string,
+		userId: string,
+		id: string,
+		active: boolean,
+	): Promise<Tag> {
+		await this.requireCatalogManagement(userId, organizationId);
+		const tag = await this.tagRepository.findOne({
+			where: { id, organizationId },
+		});
 		if (!tag) throw new NotFoundException('Tag not found');
 		tag.active = active;
 		return this.tagRepository.save(tag);
