@@ -6,11 +6,11 @@ import {
   UpdateDateColumn,
   ManyToMany,
 } from 'typeorm';
-import { Application } from './application.entity';
+import { WorkModule } from './work-module.entity';
 import { Discussion } from './discussion.entity';
 
-@Entity('indicators')
-export class Indicator {
+@Entity('components')
+export class Component {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
@@ -29,9 +29,9 @@ export class Indicator {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
 
-  @ManyToMany(() => Application, (application) => application.indicators)
-  applications!: Application[];
+  @ManyToMany(() => WorkModule, (workModule) => workModule.components)
+  workModules!: WorkModule[];
 
-  @ManyToMany(() => Discussion, (discussion) => discussion.indicators)
+  @ManyToMany(() => Discussion, (discussion) => discussion.components)
   discussions!: Discussion[];
 }

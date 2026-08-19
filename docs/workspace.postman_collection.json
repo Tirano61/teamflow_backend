@@ -23,11 +23,11 @@
 			"value": ""
 		},
 		{
-			"key": "applicationId",
+			"key": "moduleId",
 			"value": ""
 		},
 		{
-			"key": "indicatorId",
+			"key": "componentId",
 			"value": ""
 		},
 		{
@@ -172,10 +172,10 @@
 			]
 		},
 		{
-			"name": "Applications",
+			"name": "Modules",
 			"item": [
 				{
-					"name": "List active applications",
+					"name": "List active modules",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -184,11 +184,11 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/applications"
+						"url": "{{baseUrl}}/workspace/modules"
 					}
 				},
 				{
-					"name": "List all applications (developer)",
+					"name": "List all modules (developer)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -197,11 +197,11 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/applications/all"
+						"url": "{{baseUrl}}/workspace/modules/all"
 					}
 				},
 				{
-					"name": "Get active application by id",
+					"name": "Get active module by id",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -210,11 +210,11 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/applications/{{applicationId}}"
+						"url": "{{baseUrl}}/workspace/modules/{{moduleId}}"
 					}
 				},
 				{
-					"name": "Get application by id including inactive (developer)",
+					"name": "Get module by id including inactive (developer)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -223,11 +223,11 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/applications/all/{{applicationId}}"
+						"url": "{{baseUrl}}/workspace/modules/all/{{moduleId}}"
 					}
 				},
 				{
-					"name": "Create application (developer)",
+					"name": "Create module (developer)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -242,13 +242,13 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"name\": \"Remoto\",\n  \"description\": \"Aplicacion de asistencia remota\"\n}"
+							"raw": "{\n  \"name\": \"Remoto\",\n  \"description\": \"Modulo de asistencia remota\"\n}"
 						},
-						"url": "{{baseUrl}}/workspace/applications"
+						"url": "{{baseUrl}}/workspace/modules"
 					}
 				},
 				{
-					"name": "Update application (developer)",
+					"name": "Update module (developer)",
 					"request": {
 						"method": "PATCH",
 						"header": [
@@ -265,11 +265,11 @@
 							"mode": "raw",
 							"raw": "{\n  \"name\": \"Remoto V2\",\n  \"description\": \"Descripcion actualizada\"\n}"
 						},
-						"url": "{{baseUrl}}/workspace/applications/{{applicationId}}"
+						"url": "{{baseUrl}}/workspace/modules/{{moduleId}}"
 					}
 				},
 				{
-					"name": "Set application active flag (developer)",
+					"name": "Set module active flag (developer)",
 					"request": {
 						"method": "PATCH",
 						"header": [
@@ -286,16 +286,16 @@
 							"mode": "raw",
 							"raw": "{\n  \"active\": false\n}"
 						},
-						"url": "{{baseUrl}}/workspace/applications/{{applicationId}}/active"
+						"url": "{{baseUrl}}/workspace/modules/{{moduleId}}/active"
 					}
 				}
 			]
 		},
 		{
-			"name": "Indicators",
+			"name": "Components",
 			"item": [
 				{
-					"name": "List active indicators",
+					"name": "List active components",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -304,11 +304,11 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/indicators"
+						"url": "{{baseUrl}}/workspace/components"
 					}
 				},
 				{
-					"name": "List all indicators (developer)",
+					"name": "List all components (developer)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -317,11 +317,11 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/indicators/all"
+						"url": "{{baseUrl}}/workspace/components/all"
 					}
 				},
 				{
-					"name": "Get active indicator by id",
+					"name": "Get active component by id",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -330,11 +330,11 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/indicators/{{indicatorId}}"
+						"url": "{{baseUrl}}/workspace/components/{{componentId}}"
 					}
 				},
 				{
-					"name": "Get indicator by id including inactive (developer)",
+					"name": "Get component by id including inactive (developer)",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -343,11 +343,11 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/indicators/all/{{indicatorId}}"
+						"url": "{{baseUrl}}/workspace/components/all/{{componentId}}"
 					}
 				},
 				{
-					"name": "Create indicator (developer)",
+					"name": "Create component (developer)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -364,11 +364,11 @@
 							"mode": "raw",
 							"raw": "{\n  \"name\": \"ST-456\",\n  \"description\": \"Indicador de prueba\"\n}"
 						},
-						"url": "{{baseUrl}}/workspace/indicators"
+						"url": "{{baseUrl}}/workspace/components"
 					}
 				},
 				{
-					"name": "Update indicator (developer)",
+					"name": "Update component (developer)",
 					"request": {
 						"method": "PATCH",
 						"header": [
@@ -385,11 +385,11 @@
 							"mode": "raw",
 							"raw": "{\n  \"name\": \"ST-456-NEW\",\n  \"description\": \"Descripcion actualizada\"\n}"
 						},
-						"url": "{{baseUrl}}/workspace/indicators/{{indicatorId}}"
+						"url": "{{baseUrl}}/workspace/components/{{componentId}}"
 					}
 				},
 				{
-					"name": "Set indicator active flag (developer)",
+					"name": "Set component active flag (developer)",
 					"request": {
 						"method": "PATCH",
 						"header": [
@@ -406,16 +406,16 @@
 							"mode": "raw",
 							"raw": "{\n  \"active\": false\n}"
 						},
-						"url": "{{baseUrl}}/workspace/indicators/{{indicatorId}}/active"
+						"url": "{{baseUrl}}/workspace/components/{{componentId}}/active"
 					}
 				}
 			]
 		},
 		{
-			"name": "Application-Indicator Relations",
+			"name": "Module-Component Relations",
 			"item": [
 				{
-					"name": "Add indicator to application (developer)",
+					"name": "Add component to module (developer)",
 					"request": {
 						"method": "POST",
 						"header": [
@@ -424,11 +424,11 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/applications/{{applicationId}}/indicators/{{indicatorId}}"
+						"url": "{{baseUrl}}/workspace/modules/{{moduleId}}/components/{{componentId}}"
 					}
 				},
 				{
-					"name": "Remove indicator from application (developer)",
+					"name": "Remove component from module (developer)",
 					"request": {
 						"method": "DELETE",
 						"header": [
@@ -437,11 +437,11 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/applications/{{applicationId}}/indicators/{{indicatorId}}"
+						"url": "{{baseUrl}}/workspace/modules/{{moduleId}}/components/{{componentId}}"
 					}
 				},
 				{
-					"name": "List indicators by application",
+					"name": "List components by module",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -450,11 +450,11 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/applications/{{applicationId}}/indicators"
+						"url": "{{baseUrl}}/workspace/modules/{{moduleId}}/components"
 					}
 				},
 				{
-					"name": "List applications by indicator",
+					"name": "List modules by component",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -463,7 +463,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/indicators/{{indicatorId}}/applications"
+						"url": "{{baseUrl}}/workspace/components/{{componentId}}/modules"
 					}
 				}
 			]
@@ -487,7 +487,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"type\": \"ERROR\",\n  \"title\": \"Problema en app\",\n  \"initialMessageContent\": \"Descripcion inicial del problema\",\n  \"applicationIds\": [\"{{applicationId}}\"],\n  \"indicatorIds\": [\"{{indicatorId}}\"],\n  \"tagIds\": [\"{{tagId}}\"]\n}"
+							"raw": "{\n  \"type\": \"ERROR\",\n  \"title\": \"Problema en app\",\n  \"initialMessageContent\": \"Descripcion inicial del problema\",\n  \"moduleIds\": [\"{{moduleId}}\"],\n  \"componentIds\": [\"{{componentId}}\"],\n  \"tagIds\": [\"{{tagId}}\"]\n}"
 						},
 						"url": "{{baseUrl}}/workspace/discussions"
 					}
@@ -502,7 +502,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/discussions?page=1&limit=20&type=ERROR&status=NEW&applicationIds={{applicationId}}&indicatorIds={{indicatorId}}&tagIds={{tagId}}&mine=false&assignedToMe=false&assignedDeveloperId={{developerUserId}}&unread=false"
+						"url": "{{baseUrl}}/workspace/discussions?page=1&limit=20&type=ERROR&status=NEW&moduleIds={{moduleId}}&componentIds={{componentId}}&tagIds={{tagId}}&mine=false&assignedToMe=false&assignedDeveloperId={{developerUserId}}&unread=false"
 					}
 				},
 				{
@@ -567,7 +567,7 @@
 				},
 				{
 					"name": "Update discussion (auth, context only developer)",
-					"description": "Si cambia realmente applicationIds y/o indicatorIds, backend emite FCM silent sync data-only: DISCUSSION_CONTEXT_CHANGED (sin notification visible).",
+					"description": "Si cambia realmente moduleIds y/o componentIds, backend emite FCM silent sync data-only: DISCUSSION_CONTEXT_CHANGED (sin notification visible).",
 					"request": {
 						"method": "PATCH",
 						"header": [
@@ -582,7 +582,7 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"type\": \"IMPROVEMENT\",\n  \"title\": \"Titulo actualizado\",\n  \"applicationIds\": [\"{{applicationId}}\"],\n  \"indicatorIds\": [\"{{indicatorId}}\"],\n  \"tagIds\": [\"{{tagId}}\"]\n}"
+							"raw": "{\n  \"type\": \"IMPROVEMENT\",\n  \"title\": \"Titulo actualizado\",\n  \"moduleIds\": [\"{{moduleId}}\"],\n  \"componentIds\": [\"{{componentId}}\"],\n  \"tagIds\": [\"{{tagId}}\"]\n}"
 						},
 						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}"
 					}
@@ -746,7 +746,7 @@
 					}
 				},
 				{
-					"name": "Add application to discussion (developer)",
+					"name": "Add module to discussion (developer)",
 					"description": "Si la relacion se agrega correctamente, backend emite FCM silent sync data-only: DISCUSSION_CONTEXT_CHANGED (sin notification visible).",
 					"request": {
 						"method": "POST",
@@ -762,13 +762,13 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"applicationId\": \"{{applicationId}}\"\n}"
+							"raw": "{\n  \"moduleId\": \"{{moduleId}}\"\n}"
 						},
-						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/applications"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/modules"
 					}
 				},
 				{
-					"name": "Remove application from discussion (developer)",
+					"name": "Remove module from discussion (developer)",
 					"description": "Si la relacion se elimina correctamente, backend emite FCM silent sync data-only: DISCUSSION_CONTEXT_CHANGED (sin notification visible).",
 					"request": {
 						"method": "DELETE",
@@ -778,11 +778,11 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/applications/{{applicationId}}"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/modules/{{moduleId}}"
 					}
 				},
 				{
-					"name": "Add indicator to discussion (developer)",
+					"name": "Add component to discussion (developer)",
 					"description": "Si la relacion se agrega correctamente, backend emite FCM silent sync data-only: DISCUSSION_CONTEXT_CHANGED (sin notification visible).",
 					"request": {
 						"method": "POST",
@@ -798,13 +798,13 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"indicatorId\": \"{{indicatorId}}\"\n}"
+							"raw": "{\n  \"componentId\": \"{{componentId}}\"\n}"
 						},
-						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/indicators"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/components"
 					}
 				},
 				{
-					"name": "Remove indicator from discussion (developer)",
+					"name": "Remove component from discussion (developer)",
 					"description": "Si la relacion se elimina correctamente, backend emite FCM silent sync data-only: DISCUSSION_CONTEXT_CHANGED (sin notification visible).",
 					"request": {
 						"method": "DELETE",
@@ -814,7 +814,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/indicators/{{indicatorId}}"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/components/{{componentId}}"
 					}
 				},
 				{

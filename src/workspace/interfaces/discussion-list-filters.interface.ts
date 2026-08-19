@@ -6,8 +6,8 @@ export interface DiscussionListFilters {
 	limit: number;
 	type?: DiscussionType;
 	status?: DiscussionStatus;
-	applicationIds?: string;
-	indicatorIds?: string;
+	moduleIds?: string;
+	componentIds?: string;
 	tagIds?: string;
 	createdBy?: string;
 	mine?: boolean;

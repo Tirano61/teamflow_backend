@@ -12,8 +12,8 @@ import { ValidRoles } from '../../auth/interfaces/valid-roles';
 import { DiscussionCreateDto } from '../dto/create-discussion.dto';
 import { DiscussionUpdateDto } from '../dto/update-discussion.dto';
 import { Discussion } from '../entities/discussion.entity';
-import { Application } from '../entities/application.entity';
-import { Indicator } from '../entities/indicator.entity';
+import { WorkModule } from '../entities/work-module.entity';
+import { Component } from '../entities/component.entity';
 import { DiscussionMessage } from '../entities/discussion_message.entity';
 import { DiscussionReadState } from '../entities/discussion_read_state.entity';
 import { Tag } from '../entities/tag.entity';
@@ -64,7 +64,7 @@ export class DiscussionService {
 	private assertCanModifyDiscussionContext(user: User): void {
 		if (this.isDeveloper(user)) return;
 		throw new ForbiddenException(
-			'Only developers can modify discussion applications and indicators',
+			'Only developers can modify discussion modules and components',
 		);
 	}
 
@@ -140,8 +140,8 @@ export class DiscussionService {
 			where: { id },
 			relations: [
 				'createdBy',
-				'applications',
-				'indicators',
+				'workModules',
+				'components',
 				'tags',
 				'assignedDevelopers',
 			],
@@ -324,21 +324,21 @@ export class DiscussionService {
 
 		const discussionId = await this.dataSource.transaction(async (manager) => {
 			const discussionRepository = manager.getRepository(Discussion);
-			const applicationRepository = manager.getRepository(Application);
-			const indicatorRepository = manager.getRepository(Indicator);
+			const workModuleRepository = manager.getRepository(WorkModule);
+			const componentRepository = manager.getRepository(Component);
 			const discussionMessageRepository = manager.getRepository(DiscussionMessage);
 			const tagRepository = manager.getRepository(Tag);
 
-			const [applications, indicators, tags] = await Promise.all([
+			const [workModules, components, tags] = await Promise.all([
 				this.resolveEntitiesByIds(
-					dto.applicationIds ?? [],
-					applicationRepository,
-					'Application',
+					dto.moduleIds ?? [],
+					workModuleRepository,
+					'Module',
 				),
 				this.resolveEntitiesByIds(
-					dto.indicatorIds ?? [],
-					indicatorRepository,
-					'Indicator',
+					dto.componentIds ?? [],
+					componentRepository,
+					'Component',
 				),
 				this.resolveEntitiesByIds(dto.tagIds ?? [], tagRepository, 'Tag'),
 			]);
@@ -348,8 +348,8 @@ export class DiscussionService {
 				title,
 				status: DiscussionStatus.NEW,
 				createdBy: { id: user.id } as User,
-				applications,
-				indicators,
+				workModules,
+				components,
 				tags,
 			});
 
@@ -392,11 +392,11 @@ export class DiscussionService {
 			filters.page,
 			filters.limit,
 		);
-		const applicationIds = this.parseIdsCsv(
-			filters.applicationIds,
-			'applicationIds',
+		const moduleIds = this.parseIdsCsv(
+			filters.moduleIds,
+			'moduleIds',
 		);
-		const indicatorIds = this.parseIdsCsv(filters.indicatorIds, 'indicatorIds');
+		const componentIds = this.parseIdsCsv(filters.componentIds, 'componentIds');
 		const tagIds = this.parseIdsCsv(filters.tagIds, 'tagIds');
 
 		if (filters.createdBy && !isUUID(filters.createdBy, '4')) {
@@ -410,8 +410,8 @@ export class DiscussionService {
 		const queryBuilder = this.discussionRepository
 			.createQueryBuilder('discussion')
 			.leftJoin('discussion.createdBy', 'createdByFilter')
-			.leftJoin('discussion.applications', 'applicationFilter')
-			.leftJoin('discussion.indicators', 'indicatorFilter')
+			.leftJoin('discussion.workModules', 'moduleFilter')
+			.leftJoin('discussion.components', 'componentFilter')
 			.leftJoin('discussion.tags', 'tagFilter')
 			.leftJoin('discussion.assignedDevelopers', 'assignedDeveloperFilter');
 
@@ -427,15 +427,15 @@ export class DiscussionService {
 			});
 		}
 
-		if (applicationIds.length > 0) {
-			queryBuilder.andWhere('applicationFilter.id IN (:...applicationIds)', {
-				applicationIds,
+		if (moduleIds.length > 0) {
+			queryBuilder.andWhere('moduleFilter.id IN (:...moduleIds)', {
+				moduleIds,
 			});
 		}
 
-		if (indicatorIds.length > 0) {
-			queryBuilder.andWhere('indicatorFilter.id IN (:...indicatorIds)', {
-				indicatorIds,
+		if (componentIds.length > 0) {
+			queryBuilder.andWhere('componentFilter.id IN (:...componentIds)', {
+				componentIds,
 			});
 		}
 
@@ -500,8 +500,8 @@ export class DiscussionService {
 				where: { id: In(discussionIds) },
 				relations: [
 					'createdBy',
-					'applications',
-					'indicators',
+					'workModules',
+					'components',
 					'tags',
 					'assignedDevelopers',
 				],
@@ -568,13 +568,13 @@ export class DiscussionService {
 
 		const discussionId = await this.dataSource.transaction(async (manager) => {
 			const discussionRepository = manager.getRepository(Discussion);
-			const applicationRepository = manager.getRepository(Application);
-			const indicatorRepository = manager.getRepository(Indicator);
+			const workModuleRepository = manager.getRepository(WorkModule);
+			const componentRepository = manager.getRepository(Component);
 			const tagRepository = manager.getRepository(Tag);
 
 			const discussion = await discussionRepository.findOne({
 				where: { id },
-				relations: ['createdBy', 'applications', 'indicators', 'tags'],
+				relations: ['createdBy', 'workModules', 'components', 'tags'],
 			});
 
 			if (!discussion) throw new NotFoundException('Discussion not found');
@@ -588,32 +588,32 @@ export class DiscussionService {
 				discussion.type = dto.type;
 			}
 
-			if (dto.applicationIds !== undefined || dto.indicatorIds !== undefined) {
+			if (dto.moduleIds !== undefined || dto.componentIds !== undefined) {
 				this.assertCanModifyDiscussionContext(user);
 			}
 
-			if (dto.applicationIds !== undefined) {
-				const nextApplications = await this.resolveEntitiesByIds(
-					dto.applicationIds,
-					applicationRepository,
-					'Application',
+			if (dto.moduleIds !== undefined) {
+				const nextModules = await this.resolveEntitiesByIds(
+					dto.moduleIds,
+					workModuleRepository,
+					'Module',
 				);
 				didChangeContext =
 					didChangeContext ||
-					this.hasDifferentEntityIds(discussion.applications, nextApplications);
-				discussion.applications = nextApplications;
+					this.hasDifferentEntityIds(discussion.workModules, nextModules);
+				discussion.workModules = nextModules;
 			}
 
-			if (dto.indicatorIds !== undefined) {
-				const nextIndicators = await this.resolveEntitiesByIds(
-					dto.indicatorIds,
-					indicatorRepository,
-					'Indicator',
+			if (dto.componentIds !== undefined) {
+				const nextComponents = await this.resolveEntitiesByIds(
+					dto.componentIds,
+					componentRepository,
+					'Component',
 				);
 				didChangeContext =
 					didChangeContext ||
-					this.hasDifferentEntityIds(discussion.indicators, nextIndicators);
-				discussion.indicators = nextIndicators;
+					this.hasDifferentEntityIds(discussion.components, nextComponents);
+				discussion.components = nextComponents;
 			}
 
 			if (dto.tagIds !== undefined) {

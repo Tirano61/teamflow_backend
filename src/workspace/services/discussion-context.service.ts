@@ -6,9 +6,9 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Application } from '../entities/application.entity';
+import { WorkModule } from '../entities/work-module.entity';
+import { Component } from '../entities/component.entity';
 import { Discussion } from '../entities/discussion.entity';
-import { Indicator } from '../entities/indicator.entity';
 import { Tag } from '../entities/tag.entity';
 import { WorkspaceNotificationService } from './workspace-notification.service';
 import { DiscussionService } from './discussion.service';
@@ -21,37 +21,37 @@ export class DiscussionContextService {
 	constructor(
 		@InjectRepository(Discussion)
 		private readonly discussionRepository: Repository<Discussion>,
-		@InjectRepository(Application)
-		private readonly applicationRepository: Repository<Application>,
-		@InjectRepository(Indicator)
-		private readonly indicatorRepository: Repository<Indicator>,
+		@InjectRepository(WorkModule)
+		private readonly workModuleRepository: Repository<WorkModule>,
+		@InjectRepository(Component)
+		private readonly componentRepository: Repository<Component>,
 		@InjectRepository(Tag)
 		private readonly tagRepository: Repository<Tag>,
 		private readonly discussionService: DiscussionService,
 		private readonly workflowNotificationService: WorkspaceNotificationService,
 	) { }
 
-	async addApplicationToDiscussion(
+	async addModuleToDiscussion(
 		discussionId: string,
-		applicationId: string,
+		moduleId: string,
 		actor: User,
 	): Promise<Discussion> {
 		const discussion = await this.discussionService.findDiscussionById(discussionId);
-		const application = await this.applicationRepository.findOne({
-			where: { id: applicationId },
+		const module = await this.workModuleRepository.findOne({
+			where: { id: moduleId },
 		});
-		if (!application) throw new NotFoundException('Application not found');
+		if (!module) throw new NotFoundException('Module not found');
 
-		const alreadyRelated = (discussion.applications ?? []).some(
-			(item) => item.id === application.id,
+		const alreadyRelated = (discussion.workModules ?? []).some(
+			(item) => item.id === module.id,
 		);
 		if (alreadyRelated) {
 			throw new BadRequestException(
-				'Discussion and application relation already exists',
+				'Discussion and module relation already exists',
 			);
 		}
 
-		discussion.applications = [...(discussion.applications ?? []), application];
+		discussion.workModules = [...(discussion.workModules ?? []), module];
 		await this.discussionRepository.save(discussion);
 
 		try {
@@ -62,30 +62,30 @@ export class DiscussionContextService {
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : 'unknown';
 			this.logger.warn(
-				`Silent sync failed for discussion context add application discussionId=${discussionId} applicationId=${applicationId} reason=${reason}`,
+				`Silent sync failed for discussion context add module discussionId=${discussionId} moduleId=${moduleId} reason=${reason}`,
 			);
 		}
 
 		return this.discussionService.findDiscussionById(discussionId);
 	}
 
-	async removeApplicationFromDiscussion(
+	async removeModuleFromDiscussion(
 		discussionId: string,
-		applicationId: string,
+		moduleId: string,
 		actor: User,
 	): Promise<Discussion> {
 		const discussion = await this.discussionService.findDiscussionById(discussionId);
-		const hasRelation = (discussion.applications ?? []).some(
-			(item) => item.id === applicationId,
+		const hasRelation = (discussion.workModules ?? []).some(
+			(item) => item.id === moduleId,
 		);
 		if (!hasRelation) {
 			throw new NotFoundException(
-				'Discussion and application relation not found',
+				'Discussion and module relation not found',
 			);
 		}
 
-		discussion.applications = (discussion.applications ?? []).filter(
-			(item) => item.id !== applicationId,
+		discussion.workModules = (discussion.workModules ?? []).filter(
+			(item) => item.id !== moduleId,
 		);
 		await this.discussionRepository.save(discussion);
 
@@ -97,34 +97,34 @@ export class DiscussionContextService {
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : 'unknown';
 			this.logger.warn(
-				`Silent sync failed for discussion context remove application discussionId=${discussionId} applicationId=${applicationId} reason=${reason}`,
+				`Silent sync failed for discussion context remove module discussionId=${discussionId} moduleId=${moduleId} reason=${reason}`,
 			);
 		}
 
 		return this.discussionService.findDiscussionById(discussionId);
 	}
 
-	async addIndicatorToDiscussion(
+	async addComponentToDiscussion(
 		discussionId: string,
-		indicatorId: string,
+		componentId: string,
 		actor: User,
 	): Promise<Discussion> {
 		const discussion = await this.discussionService.findDiscussionById(discussionId);
-		const indicator = await this.indicatorRepository.findOne({
-			where: { id: indicatorId },
+		const component = await this.componentRepository.findOne({
+			where: { id: componentId },
 		});
-		if (!indicator) throw new NotFoundException('Indicator not found');
+		if (!component) throw new NotFoundException('Component not found');
 
-		const alreadyRelated = (discussion.indicators ?? []).some(
-			(item) => item.id === indicator.id,
+		const alreadyRelated = (discussion.components ?? []).some(
+			(item) => item.id === component.id,
 		);
 		if (alreadyRelated) {
 			throw new BadRequestException(
-				'Discussion and indicator relation already exists',
+				'Discussion and component relation already exists',
 			);
 		}
 
-		discussion.indicators = [...(discussion.indicators ?? []), indicator];
+		discussion.components = [...(discussion.components ?? []), component];
 		await this.discussionRepository.save(discussion);
 
 		try {
@@ -135,30 +135,30 @@ export class DiscussionContextService {
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : 'unknown';
 			this.logger.warn(
-				`Silent sync failed for discussion context add indicator discussionId=${discussionId} indicatorId=${indicatorId} reason=${reason}`,
+				`Silent sync failed for discussion context add component discussionId=${discussionId} componentId=${componentId} reason=${reason}`,
 			);
 		}
 
 		return this.discussionService.findDiscussionById(discussionId);
 	}
 
-	async removeIndicatorFromDiscussion(
+	async removeComponentFromDiscussion(
 		discussionId: string,
-		indicatorId: string,
+		componentId: string,
 		actor: User,
 	): Promise<Discussion> {
 		const discussion = await this.discussionService.findDiscussionById(discussionId);
-		const hasRelation = (discussion.indicators ?? []).some(
-			(item) => item.id === indicatorId,
+		const hasRelation = (discussion.components ?? []).some(
+			(item) => item.id === componentId,
 		);
 		if (!hasRelation) {
 			throw new NotFoundException(
-				'Discussion and indicator relation not found',
+				'Discussion and component relation not found',
 			);
 		}
 
-		discussion.indicators = (discussion.indicators ?? []).filter(
-			(item) => item.id !== indicatorId,
+		discussion.components = (discussion.components ?? []).filter(
+			(item) => item.id !== componentId,
 		);
 		await this.discussionRepository.save(discussion);
 
@@ -170,7 +170,7 @@ export class DiscussionContextService {
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : 'unknown';
 			this.logger.warn(
-				`Silent sync failed for discussion context remove indicator discussionId=${discussionId} indicatorId=${indicatorId} reason=${reason}`,
+				`Silent sync failed for discussion context remove component discussionId=${discussionId} componentId=${componentId} reason=${reason}`,
 			);
 		}
 

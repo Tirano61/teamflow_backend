@@ -10,12 +10,12 @@ import {
 } from '@nestjs/common';
 import { Auth } from '../../auth/decorators/auth.decorator';
 import { ValidRoles } from '../../auth/interfaces/valid-roles';
-import { ApplicationCreateDto } from '../dto/create-application.dto';
-import { IndicatorCreateDto } from '../dto/create-indicator.dto';
+import { WorkModuleCreateDto } from '../dto/create-work-module.dto';
+import { ComponentCreateDto } from '../dto/create-component.dto';
 import { TagCreateDto } from '../dto/create-tag.dto';
 import { SetActiveDto } from '../dto/set-active.dto';
-import { ApplicationUpdateDto } from '../dto/update-application.dto';
-import { IndicatorUpdateDto } from '../dto/update-indicator.dto';
+import { WorkModuleUpdateDto } from '../dto/update-work-module.dto';
+import { ComponentUpdateDto } from '../dto/update-component.dto';
 import { TagUpdateDto } from '../dto/update-tag.dto';
 import { WorkspaceCatalogService } from '../services/workspace-catalog.service';
 
@@ -25,144 +25,144 @@ export class WorkspaceCatalogController {
 		private readonly workspaceCatalogService: WorkspaceCatalogService,
 	) { }
 
-	@Get('applications')
+	@Get('modules')
 	@Auth()
-	findAllApplications() {
-		return this.workspaceCatalogService.findAllApplications(false);
+	findAllModules() {
+		return this.workspaceCatalogService.findAllModules(false);
 	}
 
-	@Get('applications/all')
+	@Get('modules/all')
 	@Auth(ValidRoles.developer)
-	findAllApplicationsIncludingInactive() {
-		return this.workspaceCatalogService.findAllApplications(true);
+	findAllModulesIncludingInactive() {
+		return this.workspaceCatalogService.findAllModules(true);
 	}
 
-	@Get('applications/:id')
+	@Get('modules/:id')
 	@Auth()
-	findApplicationById(@Param('id', ParseUUIDPipe) id: string) {
-		return this.workspaceCatalogService.findApplicationById(id, false);
+	findModuleById(@Param('id', ParseUUIDPipe) id: string) {
+		return this.workspaceCatalogService.findModuleById(id, false);
 	}
 
-	@Get('applications/all/:id')
+	@Get('modules/all/:id')
 	@Auth(ValidRoles.developer)
-	findApplicationByIdIncludingInactive(@Param('id', ParseUUIDPipe) id: string) {
-		return this.workspaceCatalogService.findApplicationById(id, true);
+	findModuleByIdIncludingInactive(@Param('id', ParseUUIDPipe) id: string) {
+		return this.workspaceCatalogService.findModuleById(id, true);
 	}
 
-	@Post('applications')
+	@Post('modules')
 	@Auth(ValidRoles.developer)
-	createApplication(@Body() dto: ApplicationCreateDto) {
-		return this.workspaceCatalogService.createApplication(dto);
+	createModule(@Body() dto: WorkModuleCreateDto) {
+		return this.workspaceCatalogService.createModule(dto);
 	}
 
-	@Patch('applications/:id')
+	@Patch('modules/:id')
 	@Auth(ValidRoles.developer)
-	updateApplication(
+	updateModule(
 		@Param('id', ParseUUIDPipe) id: string,
-		@Body() dto: ApplicationUpdateDto,
+		@Body() dto: WorkModuleUpdateDto,
 	) {
-		return this.workspaceCatalogService.updateApplication(id, dto);
+		return this.workspaceCatalogService.updateModule(id, dto);
 	}
 
-	@Patch('applications/:id/active')
+	@Patch('modules/:id/active')
 	@Auth(ValidRoles.developer)
-	setApplicationActive(
-		@Param('id', ParseUUIDPipe) id: string,
-		@Body() dto: SetActiveDto,
-	) {
-		return this.workspaceCatalogService.setApplicationActive(id, dto.active);
-	}
-
-	@Get('indicators')
-	@Auth()
-	findAllIndicators() {
-		return this.workspaceCatalogService.findAllIndicators(false);
-	}
-
-	@Get('indicators/all')
-	@Auth(ValidRoles.developer)
-	findAllIndicatorsIncludingInactive() {
-		return this.workspaceCatalogService.findAllIndicators(true);
-	}
-
-	@Get('indicators/:id')
-	@Auth()
-	findIndicatorById(@Param('id', ParseUUIDPipe) id: string) {
-		return this.workspaceCatalogService.findIndicatorById(id, false);
-	}
-
-	@Get('indicators/all/:id')
-	@Auth(ValidRoles.developer)
-	findIndicatorByIdIncludingInactive(@Param('id', ParseUUIDPipe) id: string) {
-		return this.workspaceCatalogService.findIndicatorById(id, true);
-	}
-
-	@Post('indicators')
-	@Auth(ValidRoles.developer)
-	createIndicator(@Body() dto: IndicatorCreateDto) {
-		return this.workspaceCatalogService.createIndicator(dto);
-	}
-
-	@Patch('indicators/:id')
-	@Auth(ValidRoles.developer)
-	updateIndicator(
-		@Param('id', ParseUUIDPipe) id: string,
-		@Body() dto: IndicatorUpdateDto,
-	) {
-		return this.workspaceCatalogService.updateIndicator(id, dto);
-	}
-
-	@Patch('indicators/:id/active')
-	@Auth(ValidRoles.developer)
-	setIndicatorActive(
+	setModuleActive(
 		@Param('id', ParseUUIDPipe) id: string,
 		@Body() dto: SetActiveDto,
 	) {
-		return this.workspaceCatalogService.setIndicatorActive(id, dto.active);
+		return this.workspaceCatalogService.setModuleActive(id, dto.active);
 	}
 
-	@Post('applications/:applicationId/indicators/:indicatorId')
-	@Auth(ValidRoles.developer)
-	addIndicatorToApplication(
-		@Param('applicationId', ParseUUIDPipe) applicationId: string,
-		@Param('indicatorId', ParseUUIDPipe) indicatorId: string,
-	) {
-		return this.workspaceCatalogService.addIndicatorToApplication(
-			applicationId,
-			indicatorId,
-		);
-	}
-
-	@Delete('applications/:applicationId/indicators/:indicatorId')
-	@Auth(ValidRoles.developer)
-	removeIndicatorFromApplication(
-		@Param('applicationId', ParseUUIDPipe) applicationId: string,
-		@Param('indicatorId', ParseUUIDPipe) indicatorId: string,
-	) {
-		return this.workspaceCatalogService.removeIndicatorFromApplication(
-			applicationId,
-			indicatorId,
-		);
-	}
-
-	@Get('applications/:applicationId/indicators')
+	@Get('components')
 	@Auth()
-	getIndicatorsByApplication(
-		@Param('applicationId', ParseUUIDPipe) applicationId: string,
+	findAllComponents() {
+		return this.workspaceCatalogService.findAllComponents(false);
+	}
+
+	@Get('components/all')
+	@Auth(ValidRoles.developer)
+	findAllComponentsIncludingInactive() {
+		return this.workspaceCatalogService.findAllComponents(true);
+	}
+
+	@Get('components/:id')
+	@Auth()
+	findComponentById(@Param('id', ParseUUIDPipe) id: string) {
+		return this.workspaceCatalogService.findComponentById(id, false);
+	}
+
+	@Get('components/all/:id')
+	@Auth(ValidRoles.developer)
+	findComponentByIdIncludingInactive(@Param('id', ParseUUIDPipe) id: string) {
+		return this.workspaceCatalogService.findComponentById(id, true);
+	}
+
+	@Post('components')
+	@Auth(ValidRoles.developer)
+	createComponent(@Body() dto: ComponentCreateDto) {
+		return this.workspaceCatalogService.createComponent(dto);
+	}
+
+	@Patch('components/:id')
+	@Auth(ValidRoles.developer)
+	updateComponent(
+		@Param('id', ParseUUIDPipe) id: string,
+		@Body() dto: ComponentUpdateDto,
 	) {
-		return this.workspaceCatalogService.getIndicatorsByApplication(
-			applicationId,
+		return this.workspaceCatalogService.updateComponent(id, dto);
+	}
+
+	@Patch('components/:id/active')
+	@Auth(ValidRoles.developer)
+	setComponentActive(
+		@Param('id', ParseUUIDPipe) id: string,
+		@Body() dto: SetActiveDto,
+	) {
+		return this.workspaceCatalogService.setComponentActive(id, dto.active);
+	}
+
+	@Post('modules/:moduleId/components/:componentId')
+	@Auth(ValidRoles.developer)
+	addComponentToModule(
+		@Param('moduleId', ParseUUIDPipe) moduleId: string,
+		@Param('componentId', ParseUUIDPipe) componentId: string,
+	) {
+		return this.workspaceCatalogService.addComponentToModule(
+			moduleId,
+			componentId,
+		);
+	}
+
+	@Delete('modules/:moduleId/components/:componentId')
+	@Auth(ValidRoles.developer)
+	removeComponentFromModule(
+		@Param('moduleId', ParseUUIDPipe) moduleId: string,
+		@Param('componentId', ParseUUIDPipe) componentId: string,
+	) {
+		return this.workspaceCatalogService.removeComponentFromModule(
+			moduleId,
+			componentId,
+		);
+	}
+
+	@Get('modules/:moduleId/components')
+	@Auth()
+	getComponentsByModule(
+		@Param('moduleId', ParseUUIDPipe) moduleId: string,
+	) {
+		return this.workspaceCatalogService.getComponentsByModule(
+			moduleId,
 			false,
 		);
 	}
 
-	@Get('indicators/:indicatorId/applications')
+	@Get('components/:componentId/modules')
 	@Auth()
-	getApplicationsByIndicator(
-		@Param('indicatorId', ParseUUIDPipe) indicatorId: string,
+	getModulesByComponent(
+		@Param('componentId', ParseUUIDPipe) componentId: string,
 	) {
-		return this.workspaceCatalogService.getApplicationsByIndicator(
-			indicatorId,
+		return this.workspaceCatalogService.getModulesByComponent(
+			componentId,
 			false,
 		);
 	}

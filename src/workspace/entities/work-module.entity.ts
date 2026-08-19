@@ -8,10 +8,10 @@ import {
   JoinTable,
 } from 'typeorm';
 import { Discussion } from './discussion.entity';
-import { Indicator } from './indicator.entity';
+import { Component } from './component.entity';
 
-@Entity('applications')
-export class Application {
+@Entity('work_modules')
+export class WorkModule {
   @PrimaryGeneratedColumn('uuid')
   id!: string;
 
@@ -30,14 +30,14 @@ export class Application {
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt!: Date;
 
-  @ManyToMany(() => Indicator, (indicator) => indicator.applications)
+  @ManyToMany(() => Component, (component) => component.workModules)
   @JoinTable({
-    name: 'application_indicators',
-    joinColumn: { name: 'application_id', referencedColumnName: 'id' },
-    inverseJoinColumn: { name: 'indicator_id', referencedColumnName: 'id' },
+    name: 'work_module_components',
+    joinColumn: { name: 'work_module_id', referencedColumnName: 'id' },
+    inverseJoinColumn: { name: 'component_id', referencedColumnName: 'id' },
   })
-  indicators!: Indicator[];
+  components!: Component[];
 
-  @ManyToMany(() => Discussion, (discussion) => discussion.applications)
+  @ManyToMany(() => Discussion, (discussion) => discussion.workModules)
   discussions!: Discussion[];
 }
