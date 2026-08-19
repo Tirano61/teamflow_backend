@@ -28,6 +28,11 @@ export class AuthController {
     return this.authService.createUser(createUserDto);
   }
 
+  @Post('users')
+  createBasicUser(@Body() createUserDto: CreateUserDto) {
+    return this.authService.createUser(createUserDto);
+  }
+
   @Post('login')
   loginUser(@Body() loginUserDto: LoginUserDto) {
     return this.authService.loginUser(loginUserDto);

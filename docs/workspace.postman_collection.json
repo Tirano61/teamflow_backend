@@ -1,13 +1,13 @@
 {
 	"info": {
-		"name": "Develop Workflow - Endpoints",
+		"name": "TeamFlow Backend - Endpoints",
 		"_postman_id": "f0f9a3a3-8c7a-4c61-9c15-1e22f8f0d123",
-		"description": "Coleccion de endpoints del modulo workspace. Incluye eventos FCM visibles y silent sync (data-only) de Fase 8E.",
+		"description": "Coleccion de endpoints actuales de TeamFlow: Auth, Workspace, Organizations y Organization Invitations.",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"variable": [
 		{
-			"key": "DWbaseUrl",
+			"key": "baseUrl",
 			"value": "http://localhost:3000/api/v1"
 		},
 		{
@@ -49,12 +49,64 @@
 		{
 			"key": "deviceToken",
 			"value": ""
+		},
+		{
+			"key": "organizationId",
+			"value": ""
+		},
+		{
+			"key": "invitationToken",
+			"value": ""
 		}
 	],
 	"item": [
 		{
 			"name": "Auth",
 			"item": [
+				{
+					"name": "Create basic user",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"fullName\": \"Admin TeamFlow\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/users"
+					}
+				},
+				{
+					"name": "Register user",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"fullName\": \"Admin TeamFlow\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/register"
+					}
+				},
 				{
 					"name": "Login and save token",
 					"event": [
@@ -101,7 +153,7 @@
 								}
 							}
 						},
-						"url": "{{DWbaseUrl}}/auth/login"
+						"url": "{{baseUrl}}/auth/login"
 					}
 				},
 				{
@@ -114,7 +166,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/auth/validate"
+						"url": "{{baseUrl}}/auth/validate"
 					}
 				}
 			]
@@ -132,7 +184,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/applications"
+						"url": "{{baseUrl}}/workspace/applications"
 					}
 				},
 				{
@@ -145,7 +197,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/applications/all"
+						"url": "{{baseUrl}}/workspace/applications/all"
 					}
 				},
 				{
@@ -158,7 +210,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/applications/{{applicationId}}"
+						"url": "{{baseUrl}}/workspace/applications/{{applicationId}}"
 					}
 				},
 				{
@@ -171,7 +223,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/applications/all/{{applicationId}}"
+						"url": "{{baseUrl}}/workspace/applications/all/{{applicationId}}"
 					}
 				},
 				{
@@ -192,7 +244,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"name\": \"Remoto\",\n  \"description\": \"Aplicacion de asistencia remota\"\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/applications"
+						"url": "{{baseUrl}}/workspace/applications"
 					}
 				},
 				{
@@ -213,7 +265,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"name\": \"Remoto V2\",\n  \"description\": \"Descripcion actualizada\"\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/applications/{{applicationId}}"
+						"url": "{{baseUrl}}/workspace/applications/{{applicationId}}"
 					}
 				},
 				{
@@ -234,7 +286,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"active\": false\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/applications/{{applicationId}}/active"
+						"url": "{{baseUrl}}/workspace/applications/{{applicationId}}/active"
 					}
 				}
 			]
@@ -252,7 +304,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/indicators"
+						"url": "{{baseUrl}}/workspace/indicators"
 					}
 				},
 				{
@@ -265,7 +317,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/indicators/all"
+						"url": "{{baseUrl}}/workspace/indicators/all"
 					}
 				},
 				{
@@ -278,7 +330,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/indicators/{{indicatorId}}"
+						"url": "{{baseUrl}}/workspace/indicators/{{indicatorId}}"
 					}
 				},
 				{
@@ -291,7 +343,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/indicators/all/{{indicatorId}}"
+						"url": "{{baseUrl}}/workspace/indicators/all/{{indicatorId}}"
 					}
 				},
 				{
@@ -312,7 +364,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"name\": \"ST-456\",\n  \"description\": \"Indicador de prueba\"\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/indicators"
+						"url": "{{baseUrl}}/workspace/indicators"
 					}
 				},
 				{
@@ -333,7 +385,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"name\": \"ST-456-NEW\",\n  \"description\": \"Descripcion actualizada\"\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/indicators/{{indicatorId}}"
+						"url": "{{baseUrl}}/workspace/indicators/{{indicatorId}}"
 					}
 				},
 				{
@@ -354,7 +406,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"active\": false\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/indicators/{{indicatorId}}/active"
+						"url": "{{baseUrl}}/workspace/indicators/{{indicatorId}}/active"
 					}
 				}
 			]
@@ -372,7 +424,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/applications/{{applicationId}}/indicators/{{indicatorId}}"
+						"url": "{{baseUrl}}/workspace/applications/{{applicationId}}/indicators/{{indicatorId}}"
 					}
 				},
 				{
@@ -385,7 +437,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/applications/{{applicationId}}/indicators/{{indicatorId}}"
+						"url": "{{baseUrl}}/workspace/applications/{{applicationId}}/indicators/{{indicatorId}}"
 					}
 				},
 				{
@@ -398,7 +450,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/applications/{{applicationId}}/indicators"
+						"url": "{{baseUrl}}/workspace/applications/{{applicationId}}/indicators"
 					}
 				},
 				{
@@ -411,7 +463,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/indicators/{{indicatorId}}/applications"
+						"url": "{{baseUrl}}/workspace/indicators/{{indicatorId}}/applications"
 					}
 				}
 			]
@@ -437,7 +489,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"type\": \"ERROR\",\n  \"title\": \"Problema en app\",\n  \"initialMessageContent\": \"Descripcion inicial del problema\",\n  \"applicationIds\": [\"{{applicationId}}\"],\n  \"indicatorIds\": [\"{{indicatorId}}\"],\n  \"tagIds\": [\"{{tagId}}\"]\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/discussions"
+						"url": "{{baseUrl}}/workspace/discussions"
 					}
 				},
 				{
@@ -450,7 +502,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/discussions?page=1&limit=20&type=ERROR&status=NEW&applicationIds={{applicationId}}&indicatorIds={{indicatorId}}&tagIds={{tagId}}&mine=false&assignedToMe=false&assignedDeveloperId={{developerUserId}}&unread=false"
+						"url": "{{baseUrl}}/workspace/discussions?page=1&limit=20&type=ERROR&status=NEW&applicationIds={{applicationId}}&indicatorIds={{indicatorId}}&tagIds={{tagId}}&mine=false&assignedToMe=false&assignedDeveloperId={{developerUserId}}&unread=false"
 					}
 				},
 				{
@@ -463,7 +515,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/developers"
+						"url": "{{baseUrl}}/workspace/developers"
 					}
 				},
 				{
@@ -476,7 +528,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}"
 					}
 				},
 				{
@@ -489,7 +541,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/read"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/read"
 					}
 				},
 				{
@@ -510,7 +562,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"status\": \"IN_PROGRESS\"\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/status"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/status"
 					}
 				},
 				{
@@ -532,7 +584,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"type\": \"IMPROVEMENT\",\n  \"title\": \"Titulo actualizado\",\n  \"applicationIds\": [\"{{applicationId}}\"],\n  \"indicatorIds\": [\"{{indicatorId}}\"],\n  \"tagIds\": [\"{{tagId}}\"]\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}"
 					}
 				},
 				{
@@ -553,7 +605,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"type\": \"TEXT\",\n  \"content\": \"Necesitamos revisar este caso en produccion\"\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/messages"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/messages"
 					}
 				},
 				{
@@ -586,7 +638,7 @@
 								}
 							]
 						},
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/messages/files"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/messages/files"
 					}
 				},
 				{
@@ -599,7 +651,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/messages?page=1&limit=50&type=TEXT"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/messages?page=1&limit=50&type=TEXT"
 					}
 				},
 				{
@@ -621,7 +673,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"content\": \"Mensaje actualizado\"\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/messages/{{messageId}}"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/messages/{{messageId}}"
 					}
 				},
 				{
@@ -635,7 +687,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/messages/{{messageId}}"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/messages/{{messageId}}"
 					}
 				},
 				{
@@ -656,7 +708,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"developerUserIds\": [\"{{developerUserId}}\"]\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/assignments"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/assignments"
 					}
 				},
 				{
@@ -677,7 +729,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"developerUserIds\": [\"{{developerUserId}}\"]\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/assignments"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/assignments"
 					}
 				},
 				{
@@ -690,7 +742,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/assignments/{{developerUserId}}"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/assignments/{{developerUserId}}"
 					}
 				},
 				{
@@ -712,7 +764,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"applicationId\": \"{{applicationId}}\"\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/applications"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/applications"
 					}
 				},
 				{
@@ -726,7 +778,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/applications/{{applicationId}}"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/applications/{{applicationId}}"
 					}
 				},
 				{
@@ -748,7 +800,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"indicatorId\": \"{{indicatorId}}\"\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/indicators"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/indicators"
 					}
 				},
 				{
@@ -762,7 +814,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/indicators/{{indicatorId}}"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/indicators/{{indicatorId}}"
 					}
 				},
 				{
@@ -783,7 +835,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"tagId\": \"{{tagId}}\"\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/tags"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/tags"
 					}
 				},
 				{
@@ -796,7 +848,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/discussions/{{discussionId}}/tags/{{tagId}}"
+						"url": "{{baseUrl}}/workspace/discussions/{{discussionId}}/tags/{{tagId}}"
 					}
 				}
 			]
@@ -822,7 +874,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"token\": \"{{deviceToken}}\",\n  \"platform\": \"ANDROID\"\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/devices"
+						"url": "{{baseUrl}}/workspace/devices"
 					}
 				},
 				{
@@ -843,7 +895,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"token\": \"{{deviceToken}}\"\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/devices"
+						"url": "{{baseUrl}}/workspace/devices"
 					}
 				},
 				{
@@ -856,7 +908,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/notifications/test"
+						"url": "{{baseUrl}}/workspace/notifications/test"
 					}
 				}
 			]
@@ -874,7 +926,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/tags"
+						"url": "{{baseUrl}}/workspace/tags"
 					}
 				},
 				{
@@ -887,7 +939,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{DWbaseUrl}}/workspace/tags/all"
+						"url": "{{baseUrl}}/workspace/tags/all"
 					}
 				},
 				{
@@ -908,7 +960,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"name\": \"Urgente\"\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/tags"
+						"url": "{{baseUrl}}/workspace/tags"
 					}
 				},
 				{
@@ -929,7 +981,7 @@
 							"mode": "raw",
 							"raw": "{\n  \"name\": \"Urgencia alta\"\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/tags/{{tagId}}"
+						"url": "{{baseUrl}}/workspace/tags/{{tagId}}"
 					}
 				},
 				{
@@ -950,7 +1002,93 @@
 							"mode": "raw",
 							"raw": "{\n  \"active\": false\n}"
 						},
-						"url": "{{DWbaseUrl}}/workspace/tags/{{tagId}}/active"
+						"url": "{{baseUrl}}/workspace/tags/{{tagId}}/active"
+					}
+				}
+			]
+		},
+		{
+			"name": "Organizations",
+			"item": [
+				{
+					"name": "Create organization",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Hook Sistemas\"\n}"
+						},
+						"url": "{{baseUrl}}/organizations"
+					}
+				},
+				{
+					"name": "Get my organizations",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/me"
+					}
+				},
+				{
+					"name": "Get organization members",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					}
+				},
+				{
+					"name": "Create organization invitation",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"usuario@email.com\",\n  \"role\": \"DEVELOPER\"\n}"
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					}
+				},
+				{
+					"name": "Accept organization invitation",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organization-invitations/{{invitationToken}}/accept"
 					}
 				}
 			]
