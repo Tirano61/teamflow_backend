@@ -1,4 +1,4 @@
-# Develop Workflow Endpoints
+# TeamFlow Backend Endpoints
 
 Base URL:
 - http://localhost:3000/api/v1
@@ -6,6 +6,32 @@ Base URL:
 Autenticacion:
 - Usuario autenticado: requiere JWT Bearer valido.
 - Developer: requiere JWT Bearer con rol developer.
+
+## Auth
+
+### POST /auth/users
+- Auth: Publico
+- Descripcion: Crea un usuario basico y retorna datos de usuario con token JWT.
+- Body:
+```json
+{
+  "email": "admin@teamflow.com",
+  "password": "Admin123",
+  "fullName": "Admin TeamFlow"
+}
+```
+
+### POST /auth/register
+- Auth: Publico
+- Descripcion: Alias funcional de creacion de usuario con la misma validacion y respuesta de `/auth/users`.
+
+### POST /auth/login
+- Auth: Publico
+- Descripcion: Inicia sesion y retorna token JWT.
+
+### GET /auth/validate
+- Auth: Usuario autenticado
+- Descripcion: Valida token actual y retorna datos del usuario autenticado.
 
 ## Applications
 
@@ -343,7 +369,7 @@ Autenticacion:
 ```json
 {
   "notification": {
-    "title": "Develop Workflow",
+    "title": "Workspace",
     "body": "Prueba desde NestJS"
   },
   "data": {
@@ -351,6 +377,49 @@ Autenticacion:
   }
 }
 ```
+
+## Organizations
+
+### POST /organizations
+- Auth: Usuario autenticado
+- Descripcion: Crea una organization y, en la misma transaccion, crea Membership del usuario autenticado con role OWNER y status ACTIVE.
+- Body:
+```json
+{
+  "name": "Hook Sistemas"
+}
+```
+
+### GET /organizations/me
+- Auth: Usuario autenticado
+- Descripcion: Lista solo organizations donde el usuario autenticado tiene Membership ACTIVE.
+
+### GET /organizations/:organizationId/members
+- Auth: Usuario autenticado
+- Descripcion: Lista miembros ACTIVE de una organization. Valida que el usuario autenticado pertenezca a esa organization.
+
+### POST /organizations/:organizationId/invitations
+- Auth: Usuario autenticado
+- Descripcion: Crea invitacion para organization. Solo roles OWNER y ADMIN pueden crear invitaciones.
+- Body:
+```json
+{
+  "email": "usuario@email.com",
+  "role": "DEVELOPER"
+}
+```
+- Notas:
+  - `role` permitido: ADMIN | DEVELOPER | MEMBER
+  - `token` se genera de forma criptograficamente segura
+  - `expiresAt` se define automaticamente
+  - por ahora no envia email
+
+## Organization Invitations
+
+### POST /organization-invitations/:token/accept
+- Auth: Usuario autenticado
+- Descripcion: Acepta una invitacion pendiente si el email del usuario autenticado coincide con el email de la invitacion y no existe Membership previo en esa organization.
+- Resultado: crea Membership ACTIVE con el role de la invitacion y marca invitacion como ACCEPTED con `acceptedAt`.
 
 ### Push automaticas de eventos (Fase 8B)
 - No crea endpoints nuevos: se disparan desde endpoints funcionales existentes.
