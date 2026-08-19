@@ -2,6 +2,7 @@ import {
 	Column,
 	CreateDateColumn,
 	Entity,
+	Index,
 	JoinColumn,
 	JoinTable,
 	ManyToMany,
@@ -18,11 +19,23 @@ import { Component } from './component.entity';
 import { DiscussionMessage } from './discussion_message.entity';
 import { DiscussionReadState } from './discussion_read_state.entity';
 import { Tag } from './tag.entity';
+import { Organization } from '../../organizations/entities/organization.entity';
 
 @Entity('discussions')
+@Index('idx_discussions_organization_id', ['organizationId'])
 export class Discussion {
 	@PrimaryGeneratedColumn('uuid')
 	id!: string;
+
+	@Column({ name: 'organization_id', type: 'uuid' })
+	organizationId!: string;
+
+	@ManyToOne(() => Organization, (organization) => organization.discussions, {
+		nullable: false,
+		onDelete: 'CASCADE',
+	})
+	@JoinColumn({ name: 'organization_id' })
+	organization!: Organization;
 
 	@Column({
 		type: 'enum',

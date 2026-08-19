@@ -18,7 +18,7 @@ export const DISCUSSION_FILES_UPLOAD_ALLOWED_METHODS =
 	'GET,POST,PUT,PATCH,DELETE,OPTIONS';
 
 const DISCUSSION_FILES_UPLOAD_PATH_REGEX =
-	/^\/api\/v1\/workspace\/discussions\/[^/]+\/messages\/files\/?$/i;
+	/^\/api\/v1\/organizations\/[^/]+\/workspace\/discussions\/[^/]+\/messages\/files\/?$/i;
 
 export function isAllowedCorsOrigin(origin?: string): origin is string {
 	if (!origin) return false;

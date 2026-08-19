@@ -4,6 +4,7 @@ import { AuthModule } from '../auth/auth.module';
 import { User } from '../auth/entities/user.entity';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { FirebaseModule } from '../firebase/firebase.module';
+import { MembershipsModule } from '../memberships/memberships.module';
 import { WorkspaceCatalogController } from './controllers/workspace-catalog.controller';
 import { WorkspaceDeviceController } from './controllers/workspace-device.controller';
 import { WorkspaceNotificationController } from './controllers/workspace-notification.controller';
@@ -24,6 +25,7 @@ import { UserDeviceService } from './services/user-device.service';
 import { DiscussionContextService } from './services/discussion-context.service';
 import { DiscussionMessageService } from './services/discussion-message.service';
 import { DiscussionService } from './services/discussion.service';
+import { WorkspaceOrganizationAccessService } from './services/workspace-organization-access.service';
 
 @Module({
 	imports: [
@@ -40,6 +42,7 @@ import { DiscussionService } from './services/discussion.service';
 		AuthModule,
 		CloudinaryModule,
 		FirebaseModule,
+		MembershipsModule,
 	],
 	controllers: [
 		WorkspaceCatalogController,
@@ -55,6 +58,7 @@ import { DiscussionService } from './services/discussion.service';
 		DiscussionContextService,
 		DiscussionMessageService,
 		UserDeviceService,
+		WorkspaceOrganizationAccessService,
 		WorkspacePushNotificationService,
 		WorkspaceNotificationService,
 	],
@@ -64,6 +68,7 @@ import { DiscussionService } from './services/discussion.service';
 		DiscussionContextService,
 		DiscussionMessageService,
 		UserDeviceService,
+		WorkspaceOrganizationAccessService,
 		WorkspacePushNotificationService,
 		WorkspaceNotificationService,
 	],

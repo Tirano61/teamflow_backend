@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../../auth/entities/user.entity';
+import { MembershipStatus } from '../../memberships/enums/membership-status.enum';
 import { Discussion } from '../entities/discussion.entity';
 import { DiscussionMessage } from '../entities/discussion_message.entity';
 import { DiscussionMessageType } from '../enums/discussion-message-type.enum';
@@ -26,13 +27,21 @@ export class WorkspaceNotificationService {
 	) { }
 
 	private async findActiveRecipientUserIdsExcludingActor(
+		organizationId: string,
 		actorUserId: string,
 	): Promise<string[]> {
 		const rows = await this.userRepository
 			.createQueryBuilder('user')
 			.innerJoin('user.userDevices', 'device')
+			.innerJoin('user.memberships', 'membership')
 			.select('user.id', 'id')
 			.where('user.isActive = true')
+			.andWhere('membership.organization_id = :organizationId', {
+				organizationId,
+			})
+			.andWhere('membership.status = :activeStatus', {
+				activeStatus: MembershipStatus.ACTIVE,
+			})
 			.andWhere('user.id <> :actorUserId', { actorUserId })
 			.distinct(true)
 			.getRawMany<{ id: string }>();
@@ -41,12 +50,14 @@ export class WorkspaceNotificationService {
 	}
 
 	private async dispatchToActiveUsers(
+		organizationId: string,
 		actorUserId: string,
 		eventType: string,
 		discussionId: string,
 		payload: WorkspaceNotificationPayload,
 	): Promise<void> {
 		const recipientUserIds = await this.findActiveRecipientUserIdsExcludingActor(
+			organizationId,
 			actorUserId,
 		);
 
@@ -101,6 +112,7 @@ export class WorkspaceNotificationService {
 		);
 
 		await this.dispatchToActiveUsers(
+			discussion.organizationId,
 			actor.id,
 			'DISCUSSION_CREATED',
 			discussion.id,
@@ -165,6 +177,7 @@ export class WorkspaceNotificationService {
 		);
 
 		await this.dispatchToActiveUsers(
+			discussion.organizationId,
 			actor.id,
 			'DISCUSSION_MESSAGE',
 			discussion.id,
@@ -189,6 +202,7 @@ export class WorkspaceNotificationService {
 		);
 
 		await this.dispatchToActiveUsers(
+			discussion.organizationId,
 			actor.id,
 			'DISCUSSION_STATUS_CHANGED',
 			discussion.id,
@@ -210,6 +224,7 @@ export class WorkspaceNotificationService {
 		);
 
 		await this.dispatchToActiveUsers(
+			discussion.organizationId,
 			actor.id,
 			'DISCUSSION_ASSIGNMENT_CHANGED',
 			discussion.id,
@@ -218,6 +233,7 @@ export class WorkspaceNotificationService {
 	}
 
 	async syncMessageUpdated(
+		organizationId: string,
 		discussionId: string,
 		messageId: string,
 		actor: User,
@@ -229,6 +245,7 @@ export class WorkspaceNotificationService {
 		});
 
 		await this.dispatchToActiveUsers(
+			organizationId,
 			actor.id,
 			'DISCUSSION_MESSAGE_UPDATED',
 			discussionId,
@@ -237,6 +254,7 @@ export class WorkspaceNotificationService {
 	}
 
 	async syncMessageDeleted(
+		organizationId: string,
 		discussionId: string,
 		messageId: string,
 		actor: User,
@@ -248,6 +266,7 @@ export class WorkspaceNotificationService {
 		});
 
 		await this.dispatchToActiveUsers(
+			organizationId,
 			actor.id,
 			'DISCUSSION_MESSAGE_DELETED',
 			discussionId,
@@ -256,6 +275,7 @@ export class WorkspaceNotificationService {
 	}
 
 	async syncDiscussionContextChanged(
+		organizationId: string,
 		discussionId: string,
 		actor: User,
 	): Promise<void> {
@@ -265,6 +285,7 @@ export class WorkspaceNotificationService {
 		});
 
 		await this.dispatchToActiveUsers(
+			organizationId,
 			actor.id,
 			'DISCUSSION_CONTEXT_CHANGED',
 			discussionId,

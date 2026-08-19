@@ -2,24 +2,25 @@ import { Body, Controller, Delete, Param, ParseUUIDPipe, Post } from '@nestjs/co
 import { Auth } from '../../auth/decorators/auth.decorator';
 import { GetUser } from '../../auth/decorators/get-user.decorator';
 import { User } from '../../auth/entities/user.entity';
-import { ValidRoles } from '../../auth/interfaces/valid-roles';
 import { AddModuleToDiscussionDto } from '../dto/add-module-to-discussion.dto';
 import { AddComponentToDiscussionDto } from '../dto/add-component-to-discussion.dto';
 import { AddTagToDiscussionDto } from '../dto/add-tag-to-discussion.dto';
 import { DiscussionContextService } from '../services/discussion-context.service';
 
-@Controller('workspace')
+@Controller('organizations/:organizationId/workspace')
 export class DiscussionContextController {
-	constructor(private readonly discussionContextService: DiscussionContextService) { }
+	constructor(private readonly discussionContextService: DiscussionContextService) {}
 
 	@Post('discussions/:id/modules')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	addModuleToDiscussion(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Body() dto: AddModuleToDiscussionDto,
 		@GetUser() user: User,
 	) {
 		return this.discussionContextService.addModuleToDiscussion(
+			organizationId,
 			id,
 			dto.moduleId,
 			user,
@@ -27,13 +28,15 @@ export class DiscussionContextController {
 	}
 
 	@Delete('discussions/:id/modules/:moduleId')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	removeModuleFromDiscussion(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Param('moduleId', ParseUUIDPipe) moduleId: string,
 		@GetUser() user: User,
 	) {
 		return this.discussionContextService.removeModuleFromDiscussion(
+			organizationId,
 			id,
 			moduleId,
 			user,
@@ -41,13 +44,15 @@ export class DiscussionContextController {
 	}
 
 	@Post('discussions/:id/components')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	addComponentToDiscussion(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Body() dto: AddComponentToDiscussionDto,
 		@GetUser() user: User,
 	) {
 		return this.discussionContextService.addComponentToDiscussion(
+			organizationId,
 			id,
 			dto.componentId,
 			user,
@@ -55,13 +60,15 @@ export class DiscussionContextController {
 	}
 
 	@Delete('discussions/:id/components/:componentId')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	removeComponentFromDiscussion(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Param('componentId', ParseUUIDPipe) componentId: string,
 		@GetUser() user: User,
 	) {
 		return this.discussionContextService.removeComponentFromDiscussion(
+			organizationId,
 			id,
 			componentId,
 			user,
@@ -69,20 +76,34 @@ export class DiscussionContextController {
 	}
 
 	@Post('discussions/:id/tags')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	addTagToDiscussion(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Body() dto: AddTagToDiscussionDto,
+		@GetUser() user: User,
 	) {
-		return this.discussionContextService.addTagToDiscussion(id, dto.tagId);
+		return this.discussionContextService.addTagToDiscussion(
+			organizationId,
+			id,
+			dto.tagId,
+			user,
+		);
 	}
 
 	@Delete('discussions/:id/tags/:tagId')
-	@Auth(ValidRoles.developer)
+	@Auth()
 	removeTagFromDiscussion(
+		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@Param('id', ParseUUIDPipe) id: string,
 		@Param('tagId', ParseUUIDPipe) tagId: string,
+		@GetUser() user: User,
 	) {
-		return this.discussionContextService.removeTagFromDiscussion(id, tagId);
+		return this.discussionContextService.removeTagFromDiscussion(
+			organizationId,
+			id,
+			tagId,
+			user,
+		);
 	}
 }

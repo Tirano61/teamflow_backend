@@ -13,6 +13,7 @@ import { Tag } from '../entities/tag.entity';
 import { WorkspaceNotificationService } from './workspace-notification.service';
 import { DiscussionService } from './discussion.service';
 import { User } from '../../auth/entities/user.entity';
+import { WorkspaceOrganizationAccessService } from './workspace-organization-access.service';
 
 @Injectable()
 export class DiscussionContextService {
@@ -29,16 +30,28 @@ export class DiscussionContextService {
 		private readonly tagRepository: Repository<Tag>,
 		private readonly discussionService: DiscussionService,
 		private readonly workflowNotificationService: WorkspaceNotificationService,
+		private readonly orgAccessService: WorkspaceOrganizationAccessService,
 	) { }
 
 	async addModuleToDiscussion(
+		organizationId: string,
 		discussionId: string,
 		moduleId: string,
 		actor: User,
 	): Promise<Discussion> {
-		const discussion = await this.discussionService.findDiscussionById(discussionId);
+		const membership = await this.orgAccessService.requireActiveMembership(
+			actor.id,
+			organizationId,
+		);
+		this.orgAccessService.assertCanManageDiscussion(membership);
+
+		const discussion = await this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			actor,
+		);
 		const module = await this.workModuleRepository.findOne({
-			where: { id: moduleId },
+			where: { id: moduleId, organizationId },
 		});
 		if (!module) throw new NotFoundException('Module not found');
 
@@ -56,6 +69,7 @@ export class DiscussionContextService {
 
 		try {
 			await this.workflowNotificationService.syncDiscussionContextChanged(
+				organizationId,
 				discussionId,
 				actor,
 			);
@@ -66,15 +80,30 @@ export class DiscussionContextService {
 			);
 		}
 
-		return this.discussionService.findDiscussionById(discussionId);
+		return this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			actor,
+		);
 	}
 
 	async removeModuleFromDiscussion(
+		organizationId: string,
 		discussionId: string,
 		moduleId: string,
 		actor: User,
 	): Promise<Discussion> {
-		const discussion = await this.discussionService.findDiscussionById(discussionId);
+		const membership = await this.orgAccessService.requireActiveMembership(
+			actor.id,
+			organizationId,
+		);
+		this.orgAccessService.assertCanManageDiscussion(membership);
+
+		const discussion = await this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			actor,
+		);
 		const hasRelation = (discussion.workModules ?? []).some(
 			(item) => item.id === moduleId,
 		);
@@ -91,6 +120,7 @@ export class DiscussionContextService {
 
 		try {
 			await this.workflowNotificationService.syncDiscussionContextChanged(
+				organizationId,
 				discussionId,
 				actor,
 			);
@@ -101,17 +131,32 @@ export class DiscussionContextService {
 			);
 		}
 
-		return this.discussionService.findDiscussionById(discussionId);
+		return this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			actor,
+		);
 	}
 
 	async addComponentToDiscussion(
+		organizationId: string,
 		discussionId: string,
 		componentId: string,
 		actor: User,
 	): Promise<Discussion> {
-		const discussion = await this.discussionService.findDiscussionById(discussionId);
+		const membership = await this.orgAccessService.requireActiveMembership(
+			actor.id,
+			organizationId,
+		);
+		this.orgAccessService.assertCanManageDiscussion(membership);
+
+		const discussion = await this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			actor,
+		);
 		const component = await this.componentRepository.findOne({
-			where: { id: componentId },
+			where: { id: componentId, organizationId },
 		});
 		if (!component) throw new NotFoundException('Component not found');
 
@@ -129,6 +174,7 @@ export class DiscussionContextService {
 
 		try {
 			await this.workflowNotificationService.syncDiscussionContextChanged(
+				organizationId,
 				discussionId,
 				actor,
 			);
@@ -139,15 +185,30 @@ export class DiscussionContextService {
 			);
 		}
 
-		return this.discussionService.findDiscussionById(discussionId);
+		return this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			actor,
+		);
 	}
 
 	async removeComponentFromDiscussion(
+		organizationId: string,
 		discussionId: string,
 		componentId: string,
 		actor: User,
 	): Promise<Discussion> {
-		const discussion = await this.discussionService.findDiscussionById(discussionId);
+		const membership = await this.orgAccessService.requireActiveMembership(
+			actor.id,
+			organizationId,
+		);
+		this.orgAccessService.assertCanManageDiscussion(membership);
+
+		const discussion = await this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			actor,
+		);
 		const hasRelation = (discussion.components ?? []).some(
 			(item) => item.id === componentId,
 		);
@@ -164,6 +225,7 @@ export class DiscussionContextService {
 
 		try {
 			await this.workflowNotificationService.syncDiscussionContextChanged(
+				organizationId,
 				discussionId,
 				actor,
 			);
@@ -174,15 +236,33 @@ export class DiscussionContextService {
 			);
 		}
 
-		return this.discussionService.findDiscussionById(discussionId);
+		return this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			actor,
+		);
 	}
 
 	async addTagToDiscussion(
+		organizationId: string,
 		discussionId: string,
 		tagId: string,
+		actor: User,
 	): Promise<Discussion> {
-		const discussion = await this.discussionService.findDiscussionById(discussionId);
-		const tag = await this.tagRepository.findOne({ where: { id: tagId } });
+		const membership = await this.orgAccessService.requireActiveMembership(
+			actor.id,
+			organizationId,
+		);
+		this.orgAccessService.assertCanManageDiscussion(membership);
+
+		const discussion = await this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			actor,
+		);
+		const tag = await this.tagRepository.findOne({
+			where: { id: tagId, organizationId },
+		});
 		if (!tag) throw new NotFoundException('Tag not found');
 
 		const alreadyRelated = (discussion.tags ?? []).some(
@@ -194,14 +274,30 @@ export class DiscussionContextService {
 
 		discussion.tags = [...(discussion.tags ?? []), tag];
 		await this.discussionRepository.save(discussion);
-		return this.discussionService.findDiscussionById(discussionId);
+		return this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			actor,
+		);
 	}
 
 	async removeTagFromDiscussion(
+		organizationId: string,
 		discussionId: string,
 		tagId: string,
+		actor: User,
 	): Promise<Discussion> {
-		const discussion = await this.discussionService.findDiscussionById(discussionId);
+		const membership = await this.orgAccessService.requireActiveMembership(
+			actor.id,
+			organizationId,
+		);
+		this.orgAccessService.assertCanManageDiscussion(membership);
+
+		const discussion = await this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			actor,
+		);
 		const hasRelation = (discussion.tags ?? []).some((item) => item.id === tagId);
 		if (!hasRelation) {
 			throw new NotFoundException('Discussion and tag relation not found');
@@ -209,6 +305,10 @@ export class DiscussionContextService {
 
 		discussion.tags = (discussion.tags ?? []).filter((item) => item.id !== tagId);
 		await this.discussionRepository.save(discussion);
-		return this.discussionService.findDiscussionById(discussionId);
+		return this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			actor,
+		);
 	}
 }

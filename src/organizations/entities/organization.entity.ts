@@ -11,6 +11,10 @@ import {
 import { User } from '../../auth/entities/user.entity';
 import { Membership } from '../../memberships/entities/membership.entity';
 import { OrganizationInvitation } from '../../organization_invitations/entities/organization-invitation.entity';
+import { WorkModule } from '../../workspace/entities/work-module.entity';
+import { Component } from '../../workspace/entities/component.entity';
+import { Tag } from '../../workspace/entities/tag.entity';
+import { Discussion } from '../../workspace/entities/discussion.entity';
 
 @Entity('organizations')
 export class Organization {
@@ -32,6 +36,18 @@ export class Organization {
 
 	@OneToMany(() => OrganizationInvitation, (invitation) => invitation.organization)
 	invitations: OrganizationInvitation[];
+
+	@OneToMany(() => WorkModule, (workModule) => workModule.organization)
+	workModules: WorkModule[];
+
+	@OneToMany(() => Component, (component) => component.organization)
+	components: Component[];
+
+	@OneToMany(() => Tag, (tag) => tag.organization)
+	tags: Tag[];
+
+	@OneToMany(() => Discussion, (discussion) => discussion.organization)
+	discussions: Discussion[];
 
 	@CreateDateColumn({ name: 'created_at' })
 	createdAt: Date;

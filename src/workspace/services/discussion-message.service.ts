@@ -135,6 +135,7 @@ export class DiscussionMessageService {
 	}
 
 	private async findDiscussionMessageById(
+		organizationId: string,
 		discussionId: string,
 		messageId: string,
 	): Promise<DiscussionMessage> {
@@ -147,15 +148,23 @@ export class DiscussionMessageService {
 		});
 
 		if (!message) throw new NotFoundException('Discussion message not found');
+		if (message.discussion.organizationId !== organizationId) {
+			throw new NotFoundException('Discussion message not found');
+		}
 		return message;
 	}
 
 	async createDiscussionMessage(
+		organizationId: string,
 		discussionId: string,
 		dto: DiscussionMessageCreateDto,
 		user: User,
 	): Promise<DiscussionMessage> {
-		await this.discussionService.findDiscussionByIdForUser(discussionId, user);
+		await this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			user,
+		);
 		this.assertTextMessageType(dto.type);
 
 		const message = this.discussionMessageRepository.create({
@@ -171,8 +180,16 @@ export class DiscussionMessageService {
 		});
 
 		const saved = await this.discussionMessageRepository.save(message);
-		await this.discussionService.upsertDiscussionReadState(discussionId, user.id);
-		const hydratedMessage = await this.findDiscussionMessageById(discussionId, saved.id);
+		await this.discussionService.upsertDiscussionReadState(
+			organizationId,
+			discussionId,
+			user.id,
+		);
+		const hydratedMessage = await this.findDiscussionMessageById(
+			organizationId,
+			discussionId,
+			saved.id,
+		);
 
 		try {
 			await this.workflowNotificationService.notifyDiscussionMessageCreated(
@@ -191,12 +208,17 @@ export class DiscussionMessageService {
 	}
 
 	async createDiscussionAttachmentMessage(
+		organizationId: string,
 		discussionId: string,
 		dto: DiscussionAttachmentCreateDto,
 		file: Express.Multer.File,
 		user: User,
 	): Promise<DiscussionMessage> {
-		await this.discussionService.findDiscussionByIdForUser(discussionId, user);
+		await this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			user,
+		);
 		this.assertAttachmentFile(file);
 
 		const detected = await FileType.fromBuffer(file.buffer);
@@ -237,7 +259,11 @@ export class DiscussionMessageService {
 		let saved: DiscussionMessage;
 		try {
 			saved = await this.discussionMessageRepository.save(message);
-			await this.discussionService.upsertDiscussionReadState(discussionId, user.id);
+			await this.discussionService.upsertDiscussionReadState(
+				organizationId,
+				discussionId,
+				user.id,
+			);
 		} catch (error) {
 			await this.cloudinaryService
 				.deleteAsset(uploadedAsset.publicId, uploadedAsset.resourceType)
@@ -245,7 +271,11 @@ export class DiscussionMessageService {
 			throw error;
 		}
 
-		const hydratedMessage = await this.findDiscussionMessageById(discussionId, saved.id);
+		const hydratedMessage = await this.findDiscussionMessageById(
+			organizationId,
+			discussionId,
+			saved.id,
+		);
 
 		try {
 			await this.workflowNotificationService.notifyDiscussionMessageCreated(
@@ -264,13 +294,18 @@ export class DiscussionMessageService {
 	}
 
 	async findDiscussionMessages(
+		organizationId: string,
 		discussionId: string,
 		page: number,
 		limit: number,
 		user: User,
 		type?: DiscussionMessageType,
 	): Promise<DiscussionMessageListResponse<DiscussionMessage>> {
-		await this.discussionService.findDiscussionByIdForUser(discussionId, user);
+		await this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			user,
+		);
 		const pagination = this.normalizePagination(page, limit);
 
 		const queryBuilder = this.discussionMessageRepository
@@ -302,13 +337,22 @@ export class DiscussionMessageService {
 	}
 
 	async updateDiscussionMessage(
+		organizationId: string,
 		discussionId: string,
 		messageId: string,
 		dto: DiscussionMessageUpdateDto,
 		user: User,
 	): Promise<DiscussionMessage> {
-		await this.discussionService.findDiscussionByIdForUser(discussionId, user);
-		const message = await this.findDiscussionMessageById(discussionId, messageId);
+		await this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			user,
+		);
+		const message = await this.findDiscussionMessageById(
+			organizationId,
+			discussionId,
+			messageId,
+		);
 		this.assertIsMessageAuthor(user, message);
 
 		if (message.type !== DiscussionMessageType.TEXT) {
@@ -320,6 +364,7 @@ export class DiscussionMessageService {
 
 		try {
 			await this.workflowNotificationService.syncMessageUpdated(
+				organizationId,
 				discussionId,
 				messageId,
 				user,
@@ -331,16 +376,29 @@ export class DiscussionMessageService {
 			);
 		}
 
-		return this.findDiscussionMessageById(discussionId, messageId);
+		return this.findDiscussionMessageById(
+			organizationId,
+			discussionId,
+			messageId,
+		);
 	}
 
 	async deleteDiscussionMessage(
+		organizationId: string,
 		discussionId: string,
 		messageId: string,
 		user: User,
 	): Promise<{ deleted: true; messageId: string }> {
-		await this.discussionService.findDiscussionByIdForUser(discussionId, user);
-		const message = await this.findDiscussionMessageById(discussionId, messageId);
+		await this.discussionService.findDiscussionByIdForUser(
+			organizationId,
+			discussionId,
+			user,
+		);
+		const message = await this.findDiscussionMessageById(
+			organizationId,
+			discussionId,
+			messageId,
+		);
 		this.assertIsMessageAuthor(user, message);
 
 		if (message.cloudinaryPublicId) {
@@ -376,6 +434,7 @@ export class DiscussionMessageService {
 
 		try {
 			await this.workflowNotificationService.syncMessageDeleted(
+				organizationId,
 				discussionId,
 				messageId,
 				user,
