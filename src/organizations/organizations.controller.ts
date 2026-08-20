@@ -32,6 +32,14 @@ export class OrganizationsController {
 		return this.organizationsService.getMyOrganizations(user);
 	}
 
+	@Get(':organizationId')
+	getOrganizationForCurrentUser(
+		@Param('organizationId', new ParseUUIDPipe()) organizationId: string,
+		@GetUser() user: User,
+	) {
+		return this.organizationsService.getOrganizationBasicForUser(organizationId, user);
+	}
+
 	@Get(':organizationId/members')
 	getOrganizationMembers(
 		@Param('organizationId', new ParseUUIDPipe()) organizationId: string,

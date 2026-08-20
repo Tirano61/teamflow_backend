@@ -33,6 +33,52 @@ Autenticacion:
 - Auth: Usuario autenticado
 - Descripcion: Valida token actual y retorna datos del usuario autenticado.
 
+## Onboarding / Contexto de Usuario
+
+### GET /me/context
+- Auth: Usuario autenticado
+- Descripcion: Retorna contexto de onboarding del usuario autenticado para decidir flujo post-login.
+- Incluye:
+  - `user`: id, email, fullName
+  - `organizations`: solo memberships `ACTIVE` con id, name, slug, role, joinedAt
+  - `pendingInvitations`: solo invitaciones pendientes validas para el email autenticado
+  - `organizationCount`: cantidad de organizaciones activas
+- Notas:
+  - No retorna entidades TypeORM completas.
+  - No usa ni persiste `activeOrganizationId`.
+  - El backend permanece stateless respecto de la organizacion activa.
+- Ejemplo:
+```json
+{
+  "user": {
+    "id": "f6c7f2b6-0c7d-4f47-b32d-cc6ef3e95ed0",
+    "email": "usuario@email.com",
+    "fullName": "Usuario"
+  },
+  "organizations": [
+    {
+      "id": "org-a",
+      "name": "Empresa A",
+      "slug": "empresa-a",
+      "role": "OWNER",
+      "joinedAt": "2026-08-19T20:00:00.000Z"
+    }
+  ],
+  "pendingInvitations": [
+    {
+      "invitationId": "inv-1",
+      "organizationId": "org-b",
+      "organizationName": "Empresa B",
+      "organizationSlug": "empresa-b",
+      "role": "DEVELOPER",
+      "expiresAt": "2026-08-26T20:00:00.000Z",
+      "token": "token-en-desarrollo"
+    }
+  ],
+  "organizationCount": 1
+}
+```
+
 ## Modules
 
 ### GET /workspace/modules
@@ -394,6 +440,17 @@ Autenticacion:
 - Auth: Usuario autenticado
 - Descripcion: Lista solo organizations donde el usuario autenticado tiene Membership ACTIVE.
 
+### GET /organizations/:organizationId
+- Auth: Usuario autenticado
+- Descripcion: Obtiene informacion basica tenant-safe de una organization donde el usuario autenticado tiene Membership ACTIVE.
+- Retorna:
+  - id
+  - name
+  - slug
+  - role (rol del usuario autenticado en esa organization)
+- Seguridad:
+  - Si el usuario no pertenece a la organization o su Membership no esta ACTIVE, retorna 403.
+
 ### GET /organizations/:organizationId/members
 - Auth: Usuario autenticado
 - Descripcion: Lista miembros ACTIVE de una organization. Valida que el usuario autenticado pertenezca a esa organization.
@@ -415,6 +472,24 @@ Autenticacion:
   - por ahora no envia email
 
 ## Organization Invitations
+
+### GET /organization-invitations/me
+- Auth: Usuario autenticado
+- Descripcion: Lista solo invitaciones pendientes validas para el email autenticado.
+- Filtros aplicados por backend:
+  - `email = authenticatedUser.email`
+  - `status = PENDING`
+  - `expiresAt > now`
+- Retorna por invitacion:
+  - invitationId
+  - organizationId
+  - organizationName
+  - organizationSlug
+  - role
+  - expiresAt
+  - token
+- Nota:
+  - Si una invitacion esta `PENDING` pero vencida por fecha, se actualiza a `EXPIRED` y no se retorna.
 
 ### POST /organization-invitations/:token/accept
 - Auth: Usuario autenticado
