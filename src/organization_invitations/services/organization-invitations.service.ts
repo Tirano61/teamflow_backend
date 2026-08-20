@@ -13,6 +13,7 @@ import { MembershipStatus } from '../../memberships/enums/membership-status.enum
 import { OrganizationRole } from '../../memberships/enums/organization-role.enum';
 import { MembershipsService } from '../../memberships/services/memberships.service';
 import { Organization } from '../../organizations/entities/organization.entity';
+import { PendingInvitationResponse } from '../../me/dto/user-context.response';
 import { CreateOrganizationInvitationDto } from '../dto/create-organization-invitation.dto';
 import { OrganizationInvitation } from '../entities/organization-invitation.entity';
 import { InvitationStatus } from '../enums/invitation-status.enum';
@@ -36,6 +37,41 @@ export class OrganizationInvitationsService {
 		const expiresAt = new Date();
 		expiresAt.setDate(expiresAt.getDate() + 7);
 		return expiresAt;
+	}
+
+	async listPendingInvitationsForUser(email: string): Promise<PendingInvitationResponse[]> {
+		const normalizedEmail = email.trim().toLowerCase();
+		const now = new Date();
+
+		await this.invitationRepository
+			.createQueryBuilder()
+			.update(OrganizationInvitation)
+			.set({ status: InvitationStatus.EXPIRED })
+			.where('status = :pending', { pending: InvitationStatus.PENDING })
+			.andWhere('email = :email', { email: normalizedEmail })
+			.andWhere('expires_at <= :now', { now })
+			.execute();
+
+		const invitations = await this.invitationRepository.find({
+			where: {
+				email: normalizedEmail,
+				status: InvitationStatus.PENDING,
+			},
+			relations: ['organization'],
+			order: { createdAt: 'DESC' },
+		});
+
+		return invitations
+			.filter((invitation) => invitation.expiresAt > now)
+			.map((invitation) => ({
+				invitationId: invitation.id,
+				organizationId: invitation.organization.id,
+				organizationName: invitation.organization.name,
+				organizationSlug: invitation.organization.slug,
+				role: invitation.role,
+				expiresAt: invitation.expiresAt,
+				token: invitation.token,
+			}));
 	}
 
 	async createInvitation(

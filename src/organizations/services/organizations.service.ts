@@ -8,6 +8,7 @@ import { Membership } from '../../memberships/entities/membership.entity';
 import { MembershipStatus } from '../../memberships/enums/membership-status.enum';
 import { OrganizationRole } from '../../memberships/enums/organization-role.enum';
 import { MembershipsService } from '../../memberships/services/memberships.service';
+import { UserContextOrganizationResponse } from '../../me/dto/user-context.response';
 import { CreateOrganizationDto } from '../dto/create-organization.dto';
 import { Organization } from '../entities/organization.entity';
 
@@ -73,6 +74,32 @@ export class OrganizationsService {
 	async getMyOrganizations(user: User): Promise<Organization[]> {
 		const memberships = await this.membershipsService.listActiveOrganizationMemberships(user.id);
 		return memberships.map((membership) => membership.organization);
+	}
+
+	mapMembershipsToOrganizationSummaries(
+		memberships: Membership[],
+	): UserContextOrganizationResponse[] {
+		return memberships.map((membership) => ({
+			id: membership.organization.id,
+			name: membership.organization.name,
+			slug: membership.organization.slug,
+			role: membership.role,
+			joinedAt: membership.joinedAt,
+		}));
+	}
+
+	async getOrganizationBasicForUser(organizationId: string, user: User) {
+		const membership = await this.membershipsService.requireActiveMembership(
+			user.id,
+			organizationId,
+		);
+
+		return {
+			id: membership.organization.id,
+			name: membership.organization.name,
+			slug: membership.organization.slug,
+			role: membership.role,
+		};
 	}
 
 	async getOrganizationMembers(organizationId: string, user: User): Promise<Membership[]> {

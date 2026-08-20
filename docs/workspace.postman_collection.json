@@ -1011,6 +1011,19 @@
 			"name": "Organizations",
 			"item": [
 				{
+					"name": "Get onboarding context (me/context)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/me/context"
+					}
+				},
+				{
 					"name": "Create organization",
 					"request": {
 						"method": "POST",
@@ -1058,6 +1071,19 @@
 					}
 				},
 				{
+					"name": "Get organization basic by id (tenant-safe)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}"
+					}
+				},
+				{
 					"name": "Create organization invitation",
 					"request": {
 						"method": "POST",
@@ -1076,6 +1102,19 @@
 							"raw": "{\n  \"email\": \"usuario@email.com\",\n  \"role\": \"DEVELOPER\"\n}"
 						},
 						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					}
+				},
+				{
+					"name": "Get my pending invitations",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organization-invitations/me"
 					}
 				},
 				{
