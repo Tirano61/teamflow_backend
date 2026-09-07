@@ -526,6 +526,90 @@ Autenticacion:
 }
 ```
 
+### GET /organizations/:organizationId/invitations
+- Auth: Usuario autenticado
+- Permisos: solo Membership `ACTIVE` con role `OWNER` o `ADMIN` en esa organization. `MEMBER` y `DEVELOPER` reciben 403.
+- Descripcion: Vista administrativa de las invitaciones **de la organization** (todas, sin filtrar por estado), para que el frontend pueda mostrar PENDING / ACCEPTED / EXPIRED / CANCELLED.
+- Parametros:
+  - `organizationId` (path, UUID) -> si no es UUID, 400
+- Orden: `createdAt DESC` (mas recientes primero).
+- Expiradas:
+  - Antes de listar, las invitaciones `PENDING` con `expiresAt <= now` de esa organization se actualizan a `EXPIRED` (misma regla que usa `/organization-invitations/me`).
+  - Por lo tanto una invitacion vencida nunca figura como `PENDING`.
+- Notas de respuesta:
+  - No devuelve `token`: es un endpoint administrativo y el token solo lo necesita el usuario invitado para aceptar.
+  - `invitedUser` es `null` solo en invitaciones legacy creadas unicamente con email; en ese caso el campo `email` sigue identificando al destinatario.
+- Errores:
+  - 401 sin token valido
+  - 403 si no hay Membership en la organization, si no esta `ACTIVE`, o si el role no es OWNER/ADMIN
+- Respuesta:
+```json
+[
+  {
+    "invitationId": "9a0b1c2d-3e4f-4a5b-8c7d-6e5f4a3b2c1d",
+    "invitedUser": {
+      "id": "4c0d3f5a-4d0d-4b0b-9d2a-8a4d1f0b2c31",
+      "email": "usuario@email.com",
+      "fullName": "Usuario Invitado"
+    },
+    "email": "usuario@email.com",
+    "role": "MEMBER",
+    "status": "PENDING",
+    "expiresAt": "2026-09-13T20:00:00.000Z",
+    "acceptedAt": null,
+    "createdAt": "2026-09-06T20:00:00.000Z"
+  }
+]
+```
+
+### POST /organizations/:organizationId/invitations/:invitationId/cancel
+- Auth: Usuario autenticado
+- Permisos: solo Membership `ACTIVE` con role `OWNER` o `ADMIN` en esa organization.
+- Descripcion: Cancela una invitacion `PENDING` de esa organization. Cambia `status` a `CANCELLED`.
+- Parametros:
+  - `organizationId` (path, UUID)
+  - `invitationId` (path, UUID)
+- Body: no lleva body.
+- Validaciones (en este orden):
+  1. el requester debe tener Membership `ACTIVE` en `organizationId` -> si no, 403
+  2. el requester debe ser OWNER o ADMIN -> si no, 403
+  3. la invitacion debe existir **y pertenecer a `organizationId`** -> si no, 404
+  4. la invitacion debe estar `PENDING` -> si no, 409
+- Efectos:
+  - `status` pasa a `CANCELLED`
+  - no se elimina fisicamente el registro (queda historico)
+  - no se crea ni modifica ningun Membership
+  - una invitacion `ACCEPTED`, `EXPIRED` o `CANCELLED` no puede volver a cancelarse -> 409
+- Expiradas:
+  - Antes de resolver la cancelacion se aplica la misma regla de expiracion que en el listado. Una invitacion `PENDING` vencida pasa a `EXPIRED` y su cancelacion responde 409, no 200.
+- Codigo de exito: `201` (comportamiento por defecto de Nest para POST en este proyecto, igual que `/organization-invitations/:token/accept`).
+- Respuesta: mismo objeto que el listado, ya con `status: "CANCELLED"`.
+```json
+{
+  "invitationId": "9a0b1c2d-3e4f-4a5b-8c7d-6e5f4a3b2c1d",
+  "invitedUser": {
+    "id": "4c0d3f5a-4d0d-4b0b-9d2a-8a4d1f0b2c31",
+    "email": "usuario@email.com",
+    "fullName": "Usuario Invitado"
+  },
+  "email": "usuario@email.com",
+  "role": "MEMBER",
+  "status": "CANCELLED",
+  "expiresAt": "2026-09-13T20:00:00.000Z",
+  "acceptedAt": null,
+  "createdAt": "2026-09-06T20:00:00.000Z"
+}
+```
+
+### Comportamiento tenant / anti-IDOR de invitaciones de organization
+Aplica a `GET /organizations/:organizationId/invitations` y a `POST /organizations/:organizationId/invitations/:invitationId/cancel`.
+
+- La invitacion **nunca** se busca solo por `invitationId`: la consulta siempre incluye `organization_id = :organizationId`.
+- Un OWNER de la organization A no puede ver ni cancelar invitaciones de la organization B:
+  - si usa el `organizationId` de B en el path -> 403 (no tiene Membership ACTIVE en B)
+  - si usa el `organizationId` de A con un `invitationId` de B -> 404 (esa invitacion no existe dentro de A)
+- No se filtra existencia entre organizations: la respuesta 404 es identica a la de un `invitationId` inexistente.
+
 ## Organization Invitations
 
 ### GET /organization-invitations/me
@@ -558,6 +642,11 @@ Autenticacion:
   - si es una invitacion antigua sin `invitedUser`, se valida por `email` y al aceptar se completa `invitedUser` con el usuario autenticado
   - el usuario no debe tener Membership previo en esa organization -> 409
 - Resultado: en una transaccion crea Membership `ACTIVE` con el role de la invitacion y marca la invitacion como `ACCEPTED` con `acceptedAt`.
+- Contrato del 409 (verificado, sin cambios en esta fase):
+  - mensaje: `User already belongs to this organization`
+  - la verificacion busca **cualquier** Membership del usuario en esa organization, sin filtrar por `status`; es decir, un Membership no `ACTIVE` tambien produce 409.
+  - `POST /organizations/:organizationId/invitations` usa el mismo mensaje pero solo considera Membership `ACTIVE`. La diferencia es intencional por ahora: aceptar no debe crear un segundo Membership para el mismo par usuario/organization.
+  - la invitacion queda `PENDING` cuando la aceptacion falla con 409 (no se marca `ACCEPTED`); si corresponde, OWNER/ADMIN puede cancelarla con el endpoint de cancelacion.
 
 ### Push automaticas de eventos (Fase 8B)
 - No crea endpoints nuevos: se disparan desde endpoints funcionales existentes.

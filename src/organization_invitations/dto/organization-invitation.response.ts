@@ -7,6 +7,23 @@ export interface InvitedUserResponse {
 	fullName: string;
 }
 
+/**
+ * Vista administrativa de una invitacion (OWNER/ADMIN de la organization).
+ * No expone `token`: solo el usuario invitado lo necesita para aceptar.
+ */
+export interface OrganizationInvitationSummaryResponse {
+	invitationId: string;
+	/// null solo en invitaciones legacy creadas unicamente con email.
+	invitedUser: InvitedUserResponse | null;
+	/// Email registrado en la invitacion; util para las invitaciones legacy sin `invitedUser`.
+	email: string;
+	role: OrganizationRole;
+	status: InvitationStatus;
+	expiresAt: Date;
+	acceptedAt: Date | null;
+	createdAt: Date;
+}
+
 export interface OrganizationInvitationResponse {
 	id: string;
 	organizationId: string;

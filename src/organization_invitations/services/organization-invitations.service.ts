@@ -16,7 +16,10 @@ import { MembershipsService } from '../../memberships/services/memberships.servi
 import { Organization } from '../../organizations/entities/organization.entity';
 import { PendingInvitationResponse } from '../../me/dto/user-context.response';
 import { CreateOrganizationInvitationDto } from '../dto/create-organization-invitation.dto';
-import { OrganizationInvitationResponse } from '../dto/organization-invitation.response';
+import {
+	OrganizationInvitationResponse,
+	OrganizationInvitationSummaryResponse,
+} from '../dto/organization-invitation.response';
 import { OrganizationInvitation } from '../entities/organization-invitation.entity';
 import { InvitationStatus } from '../enums/invitation-status.enum';
 
@@ -44,6 +47,19 @@ export class OrganizationInvitationsService {
 	}
 
 	/**
+	 * Regla unica de expiracion: PENDING con `expires_at` vencido pasa a EXPIRED.
+	 * Los callers acotan el alcance (por usuario o por organization).
+	 */
+	private buildExpireOutdatedInvitationsQuery() {
+		return this.invitationRepository
+			.createQueryBuilder()
+			.update(OrganizationInvitation)
+			.set({ status: InvitationStatus.EXPIRED })
+			.where('status = :pending', { pending: InvitationStatus.PENDING })
+			.andWhere('expires_at <= :now', { now: new Date() });
+	}
+
+	/**
 	 * Marca como EXPIRED las invitaciones PENDING vencidas del usuario.
 	 * Contempla invitaciones nuevas (invited_user_id) e invitaciones antiguas solo con email.
 	 */
@@ -51,17 +67,43 @@ export class OrganizationInvitationsService {
 		userId: string,
 		email: string,
 	): Promise<void> {
-		await this.invitationRepository
-			.createQueryBuilder()
-			.update(OrganizationInvitation)
-			.set({ status: InvitationStatus.EXPIRED })
-			.where('status = :pending', { pending: InvitationStatus.PENDING })
-			.andWhere('expires_at <= :now', { now: new Date() })
+		await this.buildExpireOutdatedInvitationsQuery()
 			.andWhere(
 				'(invited_user_id = :userId OR (invited_user_id IS NULL AND email = :email))',
 				{ userId, email },
 			)
 			.execute();
+	}
+
+	/**
+	 * Marca como EXPIRED las invitaciones PENDING vencidas de una organization.
+	 * Se ejecuta antes de listar/cancelar para que el estado devuelto sea el real.
+	 */
+	private async expireOutdatedInvitationsForOrganization(organizationId: string): Promise<void> {
+		await this.buildExpireOutdatedInvitationsQuery()
+			.andWhere('organization_id = :organizationId', { organizationId })
+			.execute();
+	}
+
+	private toInvitationSummary(
+		invitation: OrganizationInvitation,
+	): OrganizationInvitationSummaryResponse {
+		return {
+			invitationId: invitation.id,
+			invitedUser: invitation.invitedUser
+				? {
+						id: invitation.invitedUser.id,
+						email: invitation.invitedUser.email,
+						fullName: invitation.invitedUser.fullName,
+					}
+				: null,
+			email: invitation.email,
+			role: invitation.role,
+			status: invitation.status,
+			expiresAt: invitation.expiresAt,
+			acceptedAt: invitation.acceptedAt,
+			createdAt: invitation.createdAt,
+		};
 	}
 
 	async listPendingInvitationsForUser(user: User): Promise<PendingInvitationResponse[]> {
@@ -188,6 +230,81 @@ export class OrganizationInvitationsService {
 			acceptedAt: savedInvitation.acceptedAt,
 			createdAt: savedInvitation.createdAt,
 		};
+	}
+
+	/**
+	 * Vista administrativa: invitaciones de una organization, mas recientes primero.
+	 * Tenant-safe: siempre se filtra por `organizationId` del path.
+	 */
+	async listInvitationsForOrganization(
+		organizationId: string,
+		user: User,
+	): Promise<OrganizationInvitationSummaryResponse[]> {
+		const requesterMembership = await this.membershipsService.requireActiveMembership(
+			user.id,
+			organizationId,
+		);
+		this.membershipsService.assertCanManageInvitations(requesterMembership);
+
+		await this.expireOutdatedInvitationsForOrganization(organizationId);
+
+		const invitations = await this.invitationRepository.find({
+			where: { organization: { id: organizationId } },
+			relations: ['invitedUser'],
+			order: { createdAt: 'DESC' },
+		});
+
+		return invitations.map((invitation) => this.toInvitationSummary(invitation));
+	}
+
+	/**
+	 * Cancela una invitacion PENDING de la organization indicada.
+	 * No borra el registro ni toca Memberships.
+	 */
+	async cancelInvitation(
+		organizationId: string,
+		invitationId: string,
+		user: User,
+	): Promise<OrganizationInvitationSummaryResponse> {
+		const requesterMembership = await this.membershipsService.requireActiveMembership(
+			user.id,
+			organizationId,
+		);
+		this.membershipsService.assertCanManageInvitations(requesterMembership);
+
+		await this.expireOutdatedInvitationsForOrganization(organizationId);
+
+		/// Nunca se busca solo por `invitationId`: la organization del path es parte del filtro (anti-IDOR).
+		const invitation = await this.invitationRepository.findOne({
+			where: {
+				id: invitationId,
+				organization: { id: organizationId },
+			},
+			relations: ['invitedUser'],
+		});
+
+		if (!invitation) {
+			throw new NotFoundException('Invitation not found in this organization');
+		}
+
+		if (invitation.status !== InvitationStatus.PENDING) {
+			throw new ConflictException(
+				`Invitation cannot be cancelled because its status is ${invitation.status}`,
+			);
+		}
+
+		/// Update condicional: evita cancelar una invitacion aceptada en paralelo.
+		const updateResult = await this.invitationRepository.update(
+			{ id: invitation.id, status: InvitationStatus.PENDING },
+			{ status: InvitationStatus.CANCELLED },
+		);
+
+		if (updateResult.affected === 0) {
+			throw new ConflictException('Invitation is no longer pending and cannot be cancelled');
+		}
+
+		invitation.status = InvitationStatus.CANCELLED;
+		return this.toInvitationSummary(invitation);
 	}
 
 	async acceptInvitation(token: string, user: User): Promise<Membership> {
