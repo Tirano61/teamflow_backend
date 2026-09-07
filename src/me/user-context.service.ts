@@ -16,7 +16,7 @@ export class UserContextService {
 	async getContext(user: User): Promise<UserContextResponse> {
 		const [memberships, pendingInvitations] = await Promise.all([
 			this.membershipsService.listActiveOrganizationMemberships(user.id),
-			this.organizationInvitationsService.listPendingInvitationsForUser(user.email),
+			this.organizationInvitationsService.listPendingInvitationsForUser(user),
 		]);
 
 		const organizations = this.organizationsService.mapMembershipsToOrganizationSummaries(memberships);

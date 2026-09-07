@@ -4,6 +4,7 @@ import {
 	Column,
 	CreateDateColumn,
 	Entity,
+	Index,
 	JoinColumn,
 	ManyToOne,
 	PrimaryGeneratedColumn,
@@ -15,6 +16,7 @@ import { OrganizationRole } from '../../memberships/enums/organization-role.enum
 import { InvitationStatus } from '../enums/invitation-status.enum';
 
 @Entity('organization_invitations')
+@Index('idx_organization_invitations_invited_user_id', ['invitedUserId'])
 export class OrganizationInvitation {
 	@PrimaryGeneratedColumn('uuid')
 	id: string;
@@ -26,6 +28,25 @@ export class OrganizationInvitation {
 	@JoinColumn({ name: 'organization_id' })
 	organization: Organization;
 
+	/**
+	 * Usuario destinatario de la invitacion interna.
+	 * Es la fuente de verdad del flujo actual.
+	 * Nullable solo por compatibilidad con invitaciones antiguas creadas solo con email.
+	 */
+	@Column({ name: 'invited_user_id', type: 'uuid', nullable: true })
+	invitedUserId: string | null;
+
+	@ManyToOne(() => User, (user) => user.receivedOrganizationInvitations, {
+		nullable: true,
+		onDelete: 'CASCADE',
+	})
+	@JoinColumn({ name: 'invited_user_id' })
+	invitedUser: User | null;
+
+	/**
+	 * Se mantiene por compatibilidad e historico.
+	 * En invitaciones nuevas se completa con el email del `invitedUser`.
+	 */
 	@Column('text')
 	email: string;
 

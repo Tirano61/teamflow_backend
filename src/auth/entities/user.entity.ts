@@ -53,6 +53,12 @@ export class User {
 	)
 	createdOrganizationInvitations: OrganizationInvitation[];
 
+	@OneToMany(
+		() => OrganizationInvitation,
+		(invitation) => invitation.invitedUser,
+	)
+	receivedOrganizationInvitations: OrganizationInvitation[];
+
 	@Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
 	created_at: Date;
 

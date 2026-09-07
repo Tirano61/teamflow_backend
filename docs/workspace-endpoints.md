@@ -33,6 +33,34 @@ Autenticacion:
 - Auth: Usuario autenticado
 - Descripcion: Valida token actual y retorna datos del usuario autenticado.
 
+## Users
+
+### GET /users/search
+- Auth: Usuario autenticado
+- Descripcion: Busca usuarios registrados de TeamFlow por `email` o `fullName` para poder invitarlos a una organization.
+- Query params:
+  - `q` (requerido): texto de busqueda, minimo 2 caracteres. Coincidencia parcial e insensible a mayusculas sobre `email` y `fullName`.
+  - `limit` (opcional): default `10`, maximo `25`.
+- Filtros aplicados por backend:
+  - solo usuarios con `isActive = true`
+  - excluye al propio usuario autenticado
+  - orden por `fullName` ascendente
+- Ejemplo: `GET /users/search?q=dar&limit=10`
+- Respuesta:
+```json
+[
+  {
+    "id": "4c0d3f5a-4d0d-4b0b-9d2a-8a4d1f0b2c31",
+    "email": "dario@teamflow.com",
+    "fullName": "Dario Ramirez"
+  }
+]
+```
+- Notas:
+  - Nunca retorna `password`, `roles`, `isActive` ni otros campos internos.
+  - Si `q` tiene menos de 2 caracteres retorna 400.
+  - No lista usuarios sin filtro: `q` es obligatorio.
+
 ## Onboarding / Contexto de Usuario
 
 ### GET /me/context
@@ -41,7 +69,7 @@ Autenticacion:
 - Incluye:
   - `user`: id, email, fullName
   - `organizations`: solo memberships `ACTIVE` con id, name, slug, role, joinedAt
-  - `pendingInvitations`: solo invitaciones pendientes validas para el email autenticado
+  - `pendingInvitations`: solo invitaciones pendientes validas dirigidas al usuario autenticado (`invitedUser`)
   - `organizationCount`: cantidad de organizaciones activas
 - Notas:
   - No retorna entidades TypeORM completas.
@@ -457,27 +485,55 @@ Autenticacion:
 
 ### POST /organizations/:organizationId/invitations
 - Auth: Usuario autenticado
-- Descripcion: Crea invitacion para organization. Solo roles OWNER y ADMIN pueden crear invitaciones.
+- Descripcion: Crea una invitacion **interna** dirigida a un usuario registrado de TeamFlow. Solo roles OWNER y ADMIN pueden crear invitaciones.
 - Body:
 ```json
 {
-  "email": "usuario@email.com",
-  "role": "DEVELOPER"
+  "userId": "4c0d3f5a-4d0d-4b0b-9d2a-8a4d1f0b2c31",
+  "role": "MEMBER"
 }
 ```
+- Validaciones:
+  - el requester debe tener Membership `ACTIVE` en la organization -> si no, 403
+  - solo OWNER o ADMIN pueden invitar -> si no, 403
+  - `userId` debe ser un UUID valido y existir -> 400 / 404
+  - no se puede invitar al propio usuario autenticado -> 400
+  - `role` permitido: ADMIN | DEVELOPER | MEMBER. `OWNER` no es invitable -> 400
+  - el usuario invitado no puede tener ya Membership `ACTIVE` en esa organization -> 409
+  - no puede existir otra invitacion `PENDING` vigente para ese usuario en esa organization -> 409
 - Notas:
-  - `role` permitido: ADMIN | DEVELOPER | MEMBER
   - `token` se genera de forma criptograficamente segura
-  - `expiresAt` se define automaticamente
-  - por ahora no envia email
+  - `expiresAt` se define automaticamente (7 dias)
+  - la invitacion queda asociada a `invitedUser`; `email` se completa con el email del usuario invitado solo por historico/compatibilidad
+  - por ahora no envia email (la invitacion es interna)
+- Respuesta:
+```json
+{
+  "id": "9a0b1c2d-3e4f-4a5b-8c7d-6e5f4a3b2c1d",
+  "organizationId": "2b8e1e6c-19a5-4a7c-9f3e-9d1b2a7c4e10",
+  "invitedUser": {
+    "id": "4c0d3f5a-4d0d-4b0b-9d2a-8a4d1f0b2c31",
+    "email": "usuario@email.com",
+    "fullName": "Usuario Invitado"
+  },
+  "email": "usuario@email.com",
+  "role": "MEMBER",
+  "status": "PENDING",
+  "token": "d1f0...c9",
+  "expiresAt": "2026-09-13T20:00:00.000Z",
+  "acceptedAt": null,
+  "createdAt": "2026-09-06T20:00:00.000Z"
+}
+```
 
 ## Organization Invitations
 
 ### GET /organization-invitations/me
 - Auth: Usuario autenticado
-- Descripcion: Lista solo invitaciones pendientes validas para el email autenticado.
+- Descripcion: Lista las invitaciones pendientes validas dirigidas al usuario autenticado.
 - Filtros aplicados por backend:
-  - `email = authenticatedUser.email`
+  - `invitedUser.id = authenticatedUser.id` (fuente de verdad)
+  - o, solo por compatibilidad con invitaciones antiguas, `invited_user_id IS NULL AND email = authenticatedUser.email`
   - `status = PENDING`
   - `expiresAt > now`
 - Retorna por invitacion:
@@ -487,14 +543,21 @@ Autenticacion:
   - organizationSlug
   - role
   - expiresAt
-  - token
+  - token (sigue siendo necesario para aceptar)
 - Nota:
   - Si una invitacion esta `PENDING` pero vencida por fecha, se actualiza a `EXPIRED` y no se retorna.
 
 ### POST /organization-invitations/:token/accept
 - Auth: Usuario autenticado
-- Descripcion: Acepta una invitacion pendiente si el email del usuario autenticado coincide con el email de la invitacion y no existe Membership previo en esa organization.
-- Resultado: crea Membership ACTIVE con el role de la invitacion y marca invitacion como ACCEPTED con `acceptedAt`.
+- Descripcion: Acepta una invitacion pendiente dirigida al usuario autenticado.
+- Validaciones:
+  - la invitacion debe existir -> 404
+  - `status` debe ser `PENDING` -> 400
+  - `expiresAt > now` -> 400
+  - si la invitacion tiene `invitedUser`, debe ser el usuario autenticado -> 403
+  - si es una invitacion antigua sin `invitedUser`, se valida por `email` y al aceptar se completa `invitedUser` con el usuario autenticado
+  - el usuario no debe tener Membership previo en esa organization -> 409
+- Resultado: en una transaccion crea Membership `ACTIVE` con el role de la invitacion y marca la invitacion como `ACCEPTED` con `acceptedAt`.
 
 ### Push automaticas de eventos (Fase 8B)
 - No crea endpoints nuevos: se disparan desde endpoints funcionales existentes.

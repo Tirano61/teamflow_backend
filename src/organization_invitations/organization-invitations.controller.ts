@@ -13,7 +13,7 @@ export class OrganizationInvitationsController {
 
 	@Get('me')
 	getMyPendingInvitations(@GetUser() user: User) {
-		return this.organizationInvitationsService.listPendingInvitationsForUser(user.email);
+		return this.organizationInvitationsService.listPendingInvitationsForUser(user);
 	}
 
 	@Post(':token/accept')

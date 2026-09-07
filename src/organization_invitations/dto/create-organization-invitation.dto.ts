@@ -1,15 +1,19 @@
-import { Transform } from 'class-transformer';
-import { IsEmail, IsEnum, IsNotEmpty } from 'class-validator';
+import { IsIn, IsUUID } from 'class-validator';
 import { OrganizationRole } from '../../memberships/enums/organization-role.enum';
 
-export class CreateOrganizationInvitationDto {
-	@Transform(({ value }) =>
-		typeof value === 'string' ? value.trim().toLowerCase() : value,
-	)
-	@IsEmail()
-	@IsNotEmpty()
-	email: string;
+export const INVITABLE_ORGANIZATION_ROLES = [
+	OrganizationRole.ADMIN,
+	OrganizationRole.DEVELOPER,
+	OrganizationRole.MEMBER,
+];
 
-	@IsEnum(OrganizationRole)
+export class CreateOrganizationInvitationDto {
+	/// Usuario registrado de TeamFlow al que se invita (flujo interno).
+	@IsUUID()
+	userId: string;
+
+	@IsIn(INVITABLE_ORGANIZATION_ROLES, {
+		message: `role must be one of the following values: ${INVITABLE_ORGANIZATION_ROLES.join(', ')}`,
+	})
 	role: OrganizationRole;
 }
