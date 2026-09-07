@@ -38,15 +38,27 @@ export class MembershipsService {
 		return membership;
 	}
 
-	assertCanInvite(membership: Membership): void {
+	private assertActiveOwnerOrAdmin(membership: Membership, forbiddenMessage: string): void {
 		if (membership.status !== MembershipStatus.ACTIVE) {
 			throw new ForbiddenException('Membership is not active');
 		}
 
 		const allowedRoles = [OrganizationRole.OWNER, OrganizationRole.ADMIN];
 		if (!allowedRoles.includes(membership.role)) {
-			throw new ForbiddenException('Only OWNER or ADMIN can create invitations');
+			throw new ForbiddenException(forbiddenMessage);
 		}
+	}
+
+	assertCanInvite(membership: Membership): void {
+		this.assertActiveOwnerOrAdmin(membership, 'Only OWNER or ADMIN can create invitations');
+	}
+
+	/**
+	 * Permiso para operaciones administrativas sobre invitaciones ya creadas
+	 * (listar y cancelar). Mismo criterio que `assertCanInvite`: OWNER o ADMIN ACTIVE.
+	 */
+	assertCanManageInvitations(membership: Membership): void {
+		this.assertActiveOwnerOrAdmin(membership, 'Only OWNER or ADMIN can manage invitations');
 	}
 
 	async listActiveOrganizationMemberships(userId: string): Promise<Membership[]> {

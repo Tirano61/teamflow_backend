@@ -56,4 +56,21 @@ export class OrganizationsController {
 	) {
 		return this.invitationsService.createInvitation(organizationId, dto, user);
 	}
+
+	@Get(':organizationId/invitations')
+	listInvitations(
+		@Param('organizationId', new ParseUUIDPipe()) organizationId: string,
+		@GetUser() user: User,
+	) {
+		return this.invitationsService.listInvitationsForOrganization(organizationId, user);
+	}
+
+	@Post(':organizationId/invitations/:invitationId/cancel')
+	cancelInvitation(
+		@Param('organizationId', new ParseUUIDPipe()) organizationId: string,
+		@Param('invitationId', new ParseUUIDPipe()) invitationId: string,
+		@GetUser() user: User,
+	) {
+		return this.invitationsService.cancelInvitation(organizationId, invitationId, user);
+	}
 }

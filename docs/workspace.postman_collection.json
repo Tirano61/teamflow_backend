@@ -81,6 +81,42 @@
 		{
 			"key": "userSearchQuery",
 			"value": "Invitado"
+		},
+		{
+			"key": "adminUserEmail",
+			"value": "admin@example.com"
+		},
+		{
+			"key": "adminUserPassword",
+			"value": "AdminPassword123"
+		},
+		{
+			"key": "adminUserFullName",
+			"value": "Usuario Admin"
+		},
+		{
+			"key": "adminUserToken",
+			"value": ""
+		},
+		{
+			"key": "adminUserId",
+			"value": ""
+		},
+		{
+			"key": "adminInvitationToken",
+			"value": ""
+		},
+		{
+			"key": "organizationInvitationId",
+			"value": ""
+		},
+		{
+			"key": "acceptedInvitationId",
+			"value": ""
+		},
+		{
+			"key": "otherOrganizationId",
+			"value": ""
 		}
 	],
 	"item": [
@@ -265,6 +301,88 @@
 						"body": {
 							"mode": "raw",
 							"raw": "{\n  \"email\": \"{{invitedUserEmail}}\",\n  \"password\": \"{{invitedUserPassword}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/login"
+					}
+				},
+				{
+					"name": "Create admin user",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (data.id) {",
+									"  pm.collectionVariables.set('adminUserId', data.id);",
+									"  console.log('adminUserId guardado: ' + data.id);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{adminUserEmail}}\",\n  \"password\": \"{{adminUserPassword}}\",\n  \"fullName\": \"{{adminUserFullName}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/users"
+					},
+					"description": "Tercer usuario usado para probar el rol ADMIN en la gestion de invitaciones de organization."
+				},
+				{
+					"name": "Login admin user and save token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Login status is 201 or 200', function () {",
+									"  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Response has token', function () {",
+									"  pm.expect(data.token).to.be.a('string').and.not.empty;",
+									"});",
+									"pm.collectionVariables.set('adminUserToken', data.token);",
+									"if (data.id) { pm.collectionVariables.set('adminUserId', data.id); }",
+									"console.log('adminUserToken e adminUserId guardados');"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{adminUserEmail}}\",\n  \"password\": \"{{adminUserPassword}}\"\n}",
 							"options": {
 								"raw": {
 									"language": "json"
@@ -1574,6 +1692,536 @@
 						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
 					},
 					"description": "Ejecutar despues de que el usuario invitado acepte la invitacion: el usuario ya tiene Membership ACTIVE, por lo tanto debe responder 409."
+				},
+				{
+					"name": "List organization invitations as OWNER",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"pm.test('Response is an array', function () {",
+									"  pm.expect(data).to.be.an('array');",
+									"});",
+									"pm.test('Administrative shape without token', function () {",
+									"  data.forEach(function (item) {",
+									"    pm.expect(item).to.not.have.property('token');",
+									"    pm.expect(item).to.have.property('invitationId');",
+									"    pm.expect(item).to.have.property('invitedUser');",
+									"    pm.expect(item).to.have.property('role');",
+									"    pm.expect(item).to.have.property('status');",
+									"    pm.expect(item).to.have.property('expiresAt');",
+									"    pm.expect(item).to.have.property('acceptedAt');",
+									"    pm.expect(item).to.have.property('createdAt');",
+									"  });",
+									"});",
+									"pm.test('Ordered by createdAt DESC', function () {",
+									"  for (var i = 1; i < data.length; i++) {",
+									"    pm.expect(new Date(data[i - 1].createdAt).getTime()).to.be.at.least(new Date(data[i].createdAt).getTime());",
+									"  }",
+									"});",
+									"pm.test('No PENDING invitation is already expired', function () {",
+									"  var now = Date.now();",
+									"  data.forEach(function (item) {",
+									"    if (item.status === 'PENDING') {",
+									"      pm.expect(new Date(item.expiresAt).getTime()).to.be.above(now);",
+									"    }",
+									"  });",
+									"});",
+									"var accepted = data.filter(function (item) { return item.status === 'ACCEPTED'; })[0];",
+									"if (accepted) {",
+									"  pm.collectionVariables.set('acceptedInvitationId', accepted.invitationId);",
+									"  console.log('acceptedInvitationId guardado: ' + accepted.invitationId);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					},
+					"description": "Vista administrativa: devuelve todas las invitaciones de la organization (PENDING / ACCEPTED / EXPIRED / CANCELLED), mas recientes primero y sin token."
+				},
+				{
+					"name": "List organization invitations as MEMBER (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Message says only OWNER or ADMIN can manage invitations', function () {",
+									"  pm.expect(pm.response.text()).to.include('OWNER or ADMIN');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					},
+					"description": "El usuario invitado ya acepto con role MEMBER: pertenece a la organization pero no puede listar invitaciones."
+				},
+				{
+					"name": "Create invitation for admin user (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Invitation is PENDING with role ADMIN', function () {",
+									"  pm.expect(data.status).to.eql('PENDING');",
+									"  pm.expect(data.role).to.eql('ADMIN');",
+									"});",
+									"if (data.id) {",
+									"  pm.collectionVariables.set('organizationInvitationId', data.id);",
+									"  console.log('organizationInvitationId guardado: ' + data.id);",
+									"}",
+									"if (data.token) { pm.collectionVariables.set('adminInvitationToken', data.token); }"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"userId\": \"{{adminUserId}}\",\n  \"role\": \"ADMIN\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					},
+					"description": "Crea la invitacion PENDING que se usara para probar la cancelacion."
+				},
+				{
+					"name": "Cancel PENDING invitation (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Invitation is CANCELLED', function () {",
+									"  pm.expect(data.status).to.eql('CANCELLED');",
+									"  pm.expect(data.invitationId).to.eql(pm.collectionVariables.get('organizationInvitationId'));",
+									"});",
+									"pm.test('Cancel response does not expose token', function () {",
+									"  pm.expect(data).to.not.have.property('token');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations/{{organizationInvitationId}}/cancel"
+					}
+				},
+				{
+					"name": "Cancel same invitation again (expect 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 409', function () {",
+									"  pm.response.to.have.status(409);",
+									"});",
+									"pm.test('Message mentions CANCELLED status', function () {",
+									"  pm.expect(pm.response.text()).to.include('CANCELLED');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations/{{organizationInvitationId}}/cancel"
+					},
+					"description": "Una invitacion ya CANCELLED no puede volver a cancelarse."
+				},
+				{
+					"name": "Cancel ACCEPTED invitation (expect 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 409', function () {",
+									"  pm.response.to.have.status(409);",
+									"});",
+									"pm.test('Message mentions ACCEPTED status', function () {",
+									"  pm.expect(pm.response.text()).to.include('ACCEPTED');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations/{{acceptedInvitationId}}/cancel"
+					},
+					"description": "Usa el invitationId ACCEPTED capturado en 'List organization invitations as OWNER'."
+				},
+				{
+					"name": "Cancel invitation as MEMBER (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Message says only OWNER or ADMIN can manage invitations', function () {",
+									"  pm.expect(pm.response.text()).to.include('OWNER or ADMIN');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations/{{organizationInvitationId}}/cancel"
+					},
+					"description": "El permiso se evalua antes que el estado: responde 403 aunque la invitacion ya este CANCELLED."
+				},
+				{
+					"name": "Re-invite admin user after cancel (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('New invitation is PENDING', function () {",
+									"  pm.expect(data.status).to.eql('PENDING');",
+									"});",
+									"if (data.token) {",
+									"  pm.collectionVariables.set('adminInvitationToken', data.token);",
+									"  console.log('adminInvitationToken guardado');",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"userId\": \"{{adminUserId}}\",\n  \"role\": \"ADMIN\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					},
+					"description": "Al estar CANCELLED la invitacion anterior, se puede volver a invitar al mismo usuario (no hay PENDING vigente)."
+				},
+				{
+					"name": "Accept admin invitation (admin user)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership is ACTIVE with role ADMIN', function () {",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"  pm.expect(data.role).to.eql('ADMIN');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organization-invitations/{{adminInvitationToken}}/accept"
+					}
+				},
+				{
+					"name": "List organization invitations as ADMIN",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"pm.test('Response is an array', function () {",
+									"  pm.expect(data).to.be.an('array');",
+									"});",
+									"pm.test('Contains a CANCELLED invitation', function () {",
+									"  var cancelled = data.filter(function (item) { return item.status === 'CANCELLED'; });",
+									"  pm.expect(cancelled.length).to.be.above(0);",
+									"});",
+									"pm.test('Invitations do not expose token', function () {",
+									"  data.forEach(function (item) { pm.expect(item).to.not.have.property('token'); });",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					},
+					"description": "Ejecutar despues de que el usuario admin acepte su invitacion con role ADMIN."
+				},
+				{
+					"name": "Create second organization as invited user (cross-tenant setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (data.id) {",
+									"  pm.collectionVariables.set('otherOrganizationId', data.id);",
+									"  console.log('otherOrganizationId guardado: ' + data.id);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Organizacion Externa\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations"
+					},
+					"description": "El usuario invitado crea su propia organization (queda OWNER). Sirve para probar aislamiento entre organizations."
+				},
+				{
+					"name": "List invitations of another organization (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Message says user does not belong to this organization', function () {",
+									"  pm.expect(pm.response.text()).to.include('does not belong');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}/invitations"
+					},
+					"description": "OWNER de la organization A pide invitaciones de la organization B: no tiene Membership ahi -> 403."
+				},
+				{
+					"name": "Cancel invitation cross-tenant (expect 404)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 404', function () {",
+									"  pm.response.to.have.status(404);",
+									"});",
+									"pm.test('Message says invitation not found in this organization', function () {",
+									"  pm.expect(pm.response.text()).to.include('not found in this organization');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}/invitations/{{acceptedInvitationId}}/cancel"
+					},
+					"description": "Anti-IDOR: el OWNER de la organization B usa su propio organizationId con un invitationId de la organization A. La invitacion no se busca solo por id, por lo tanto responde 404."
+				},
+				{
+					"name": "List organization invitations - expired check (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"var now = Date.now();",
+									"pm.test('An invitation past expiresAt is never PENDING', function () {",
+									"  data.forEach(function (item) {",
+									"    if (new Date(item.expiresAt).getTime() <= now) {",
+									"      pm.expect(item.status).to.not.eql('PENDING');",
+									"    }",
+									"  });",
+									"});",
+									"var expired = data.filter(function (item) { return item.status === 'EXPIRED'; });",
+									"console.log('Invitaciones EXPIRED en la organization: ' + expired.length);"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					},
+					"description": "Para forzar el caso: crear una invitacion PENDING y vencerla en base de datos (UPDATE organization_invitations SET expires_at = now() - interval '1 day' WHERE id = '<invitationId>'), luego ejecutar este request. El backend la marca EXPIRED antes de responder y nunca la devuelve como PENDING."
 				}
 			]
 		}
