@@ -1,12 +1,13 @@
 import {
 	BadRequestException,
+	ConflictException,
 	ForbiddenException,
 	Injectable,
 	NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomBytes } from 'crypto';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, MoreThan, Repository } from 'typeorm';
 import { User } from '../../auth/entities/user.entity';
 import { Membership } from '../../memberships/entities/membership.entity';
 import { MembershipStatus } from '../../memberships/enums/membership-status.enum';
@@ -15,6 +16,7 @@ import { MembershipsService } from '../../memberships/services/memberships.servi
 import { Organization } from '../../organizations/entities/organization.entity';
 import { PendingInvitationResponse } from '../../me/dto/user-context.response';
 import { CreateOrganizationInvitationDto } from '../dto/create-organization-invitation.dto';
+import { OrganizationInvitationResponse } from '../dto/organization-invitation.response';
 import { OrganizationInvitation } from '../entities/organization-invitation.entity';
 import { InvitationStatus } from '../enums/invitation-status.enum';
 
@@ -25,6 +27,8 @@ export class OrganizationInvitationsService {
 		private readonly invitationRepository: Repository<OrganizationInvitation>,
 		@InjectRepository(Membership)
 		private readonly membershipRepository: Repository<Membership>,
+		@InjectRepository(User)
+		private readonly userRepository: Repository<User>,
 		private readonly membershipsService: MembershipsService,
 		private readonly dataSource: DataSource,
 	) {}
@@ -39,46 +43,61 @@ export class OrganizationInvitationsService {
 		return expiresAt;
 	}
 
-	async listPendingInvitationsForUser(email: string): Promise<PendingInvitationResponse[]> {
-		const normalizedEmail = email.trim().toLowerCase();
-		const now = new Date();
-
+	/**
+	 * Marca como EXPIRED las invitaciones PENDING vencidas del usuario.
+	 * Contempla invitaciones nuevas (invited_user_id) e invitaciones antiguas solo con email.
+	 */
+	private async expireOutdatedInvitationsForUser(
+		userId: string,
+		email: string,
+	): Promise<void> {
 		await this.invitationRepository
 			.createQueryBuilder()
 			.update(OrganizationInvitation)
 			.set({ status: InvitationStatus.EXPIRED })
 			.where('status = :pending', { pending: InvitationStatus.PENDING })
-			.andWhere('email = :email', { email: normalizedEmail })
-			.andWhere('expires_at <= :now', { now })
+			.andWhere('expires_at <= :now', { now: new Date() })
+			.andWhere(
+				'(invited_user_id = :userId OR (invited_user_id IS NULL AND email = :email))',
+				{ userId, email },
+			)
 			.execute();
+	}
 
-		const invitations = await this.invitationRepository.find({
-			where: {
-				email: normalizedEmail,
-				status: InvitationStatus.PENDING,
-			},
-			relations: ['organization'],
-			order: { createdAt: 'DESC' },
-		});
+	async listPendingInvitationsForUser(user: User): Promise<PendingInvitationResponse[]> {
+		const normalizedEmail = user.email.trim().toLowerCase();
+		const now = new Date();
 
-		return invitations
-			.filter((invitation) => invitation.expiresAt > now)
-			.map((invitation) => ({
-				invitationId: invitation.id,
-				organizationId: invitation.organization.id,
-				organizationName: invitation.organization.name,
-				organizationSlug: invitation.organization.slug,
-				role: invitation.role,
-				expiresAt: invitation.expiresAt,
-				token: invitation.token,
-			}));
+		await this.expireOutdatedInvitationsForUser(user.id, normalizedEmail);
+
+		const invitations = await this.invitationRepository
+			.createQueryBuilder('invitation')
+			.innerJoinAndSelect('invitation.organization', 'organization')
+			.where('invitation.status = :pending', { pending: InvitationStatus.PENDING })
+			.andWhere('invitation.expiresAt > :now', { now })
+			.andWhere(
+				'(invitation.invitedUserId = :userId OR (invitation.invitedUserId IS NULL AND invitation.email = :email))',
+				{ userId: user.id, email: normalizedEmail },
+			)
+			.orderBy('invitation.createdAt', 'DESC')
+			.getMany();
+
+		return invitations.map((invitation) => ({
+			invitationId: invitation.id,
+			organizationId: invitation.organization.id,
+			organizationName: invitation.organization.name,
+			organizationSlug: invitation.organization.slug,
+			role: invitation.role,
+			expiresAt: invitation.expiresAt,
+			token: invitation.token,
+		}));
 	}
 
 	async createInvitation(
 		organizationId: string,
 		dto: CreateOrganizationInvitationDto,
 		user: User,
-	): Promise<OrganizationInvitation> {
+	): Promise<OrganizationInvitationResponse> {
 		const requesterMembership = await this.membershipsService.requireActiveMembership(
 			user.id,
 			organizationId,
@@ -89,17 +108,86 @@ export class OrganizationInvitationsService {
 			throw new BadRequestException('Invitations cannot grant OWNER role');
 		}
 
+		const invitedUser = await this.userRepository.findOne({
+			where: { id: dto.userId },
+		});
+
+		if (!invitedUser) {
+			throw new NotFoundException('Invited user not found');
+		}
+
+		if (invitedUser.id === user.id) {
+			throw new BadRequestException('You cannot invite yourself');
+		}
+
+		const existingMembership = await this.membershipRepository.findOne({
+			where: {
+				user: { id: invitedUser.id },
+				organization: { id: organizationId },
+				status: MembershipStatus.ACTIVE,
+			},
+		});
+
+		if (existingMembership) {
+			throw new ConflictException('User already belongs to this organization');
+		}
+
+		const normalizedEmail = invitedUser.email.trim().toLowerCase();
+		await this.expireOutdatedInvitationsForUser(invitedUser.id, normalizedEmail);
+
+		const existingPendingInvitation = await this.invitationRepository.findOne({
+			where: [
+				{
+					organization: { id: organizationId },
+					status: InvitationStatus.PENDING,
+					expiresAt: MoreThan(new Date()),
+					invitedUserId: invitedUser.id,
+				},
+				{
+					organization: { id: organizationId },
+					status: InvitationStatus.PENDING,
+					expiresAt: MoreThan(new Date()),
+					invitedUserId: IsNull(),
+					email: normalizedEmail,
+				},
+			],
+		});
+
+		if (existingPendingInvitation) {
+			throw new ConflictException(
+				'There is already a pending invitation for this user in this organization',
+			);
+		}
+
 		const invitation = this.invitationRepository.create({
-			organization: { id: organizationId },
-			email: dto.email,
+			organization: { id: organizationId } as Organization,
+			invitedUserId: invitedUser.id,
+			email: normalizedEmail,
 			role: dto.role,
 			token: this.generateToken(),
 			status: InvitationStatus.PENDING,
 			expiresAt: this.buildExpirationDate(),
-			createdBy: { id: user.id },
+			createdBy: { id: user.id } as User,
 		});
 
-		return this.invitationRepository.save(invitation);
+		const savedInvitation = await this.invitationRepository.save(invitation);
+
+		return {
+			id: savedInvitation.id,
+			organizationId,
+			invitedUser: {
+				id: invitedUser.id,
+				email: invitedUser.email,
+				fullName: invitedUser.fullName,
+			},
+			email: savedInvitation.email,
+			role: savedInvitation.role,
+			status: savedInvitation.status,
+			token: savedInvitation.token,
+			expiresAt: savedInvitation.expiresAt,
+			acceptedAt: savedInvitation.acceptedAt,
+			createdAt: savedInvitation.createdAt,
+		};
 	}
 
 	async acceptInvitation(token: string, user: User): Promise<Membership> {
@@ -124,8 +212,17 @@ export class OrganizationInvitationsService {
 				throw new BadRequestException('Invitation has expired');
 			}
 
-			if (invitation.email !== user.email.trim().toLowerCase()) {
-				throw new ForbiddenException('Invitation email does not match current user');
+			if (invitation.invitedUserId) {
+				/// Flujo interno actual: la invitacion pertenece a un usuario concreto.
+				if (invitation.invitedUserId !== user.id) {
+					throw new ForbiddenException('Invitation does not belong to current user');
+				}
+			} else {
+				/// Compatibilidad: invitaciones antiguas creadas solo con email.
+				if (invitation.email !== user.email.trim().toLowerCase()) {
+					throw new ForbiddenException('Invitation email does not match current user');
+				}
+				invitation.invitedUserId = user.id;
 			}
 
 			const existingMembership = await membershipRepository.findOne({
@@ -136,7 +233,7 @@ export class OrganizationInvitationsService {
 			});
 
 			if (existingMembership) {
-				throw new BadRequestException('User already belongs to this organization');
+				throw new ConflictException('User already belongs to this organization');
 			}
 
 			const membership = membershipRepository.create({

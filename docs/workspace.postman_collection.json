@@ -2,7 +2,7 @@
 	"info": {
 		"name": "TeamFlow Backend - Endpoints",
 		"_postman_id": "f0f9a3a3-8c7a-4c61-9c15-1e22f8f0d123",
-		"description": "Coleccion de endpoints actuales de TeamFlow: Auth, Workspace, Organizations y Organization Invitations.",
+		"description": "Coleccion de endpoints actuales de TeamFlow: Auth, Users, Workspace, Organizations y Organization Invitations (invitaciones internas por userId).",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"variable": [
@@ -57,6 +57,30 @@
 		{
 			"key": "invitationToken",
 			"value": ""
+		},
+		{
+			"key": "invitedUserEmail",
+			"value": "invitado@example.com"
+		},
+		{
+			"key": "invitedUserPassword",
+			"value": "InvitedPassword123"
+		},
+		{
+			"key": "invitedUserFullName",
+			"value": "Usuario Invitado"
+		},
+		{
+			"key": "invitedUserToken",
+			"value": ""
+		},
+		{
+			"key": "invitedUserId",
+			"value": ""
+		},
+		{
+			"key": "userSearchQuery",
+			"value": "Invitado"
 		}
 	],
 	"item": [
@@ -167,6 +191,87 @@
 							}
 						],
 						"url": "{{baseUrl}}/auth/validate"
+					}
+				},
+				{
+					"name": "Create invited user",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (data.id) {",
+									"  pm.collectionVariables.set('invitedUserId', data.id);",
+									"  console.log('invitedUserId guardado: ' + data.id);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{invitedUserEmail}}\",\n  \"password\": \"{{invitedUserPassword}}\",\n  \"fullName\": \"{{invitedUserFullName}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/users"
+					}
+				},
+				{
+					"name": "Login invited user and save token",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Login status is 201 or 200', function () {",
+									"  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Response has token', function () {",
+									"  pm.expect(data.token).to.be.a('string').and.not.empty;",
+									"});",
+									"pm.collectionVariables.set('invitedUserToken', data.token);",
+									"if (data.id) { pm.collectionVariables.set('invitedUserId', data.id); }",
+									"console.log('invitedUserToken e invitedUserId guardados');"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{invitedUserEmail}}\",\n  \"password\": \"{{invitedUserPassword}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/login"
 					}
 				}
 			]
@@ -1008,6 +1113,143 @@
 			]
 		},
 		{
+			"name": "Users",
+			"item": [
+				{
+					"name": "Search users by fullName",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"pm.test('Response is an array', function () {",
+									"  pm.expect(data).to.be.an('array');",
+									"});",
+									"pm.test('No sensitive fields returned', function () {",
+									"  data.forEach(function (item) {",
+									"    pm.expect(item).to.not.have.property('password');",
+									"    pm.expect(item).to.not.have.property('roles');",
+									"  });",
+									"});",
+									"if (data.length > 0 && data[0].id) {",
+									"  pm.collectionVariables.set('invitedUserId', data[0].id);",
+									"  console.log('invitedUserId guardado: ' + data[0].id);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/users/search?q={{userSearchQuery}}&limit=10",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "search"],
+							"query": [
+								{
+									"key": "q",
+									"value": "{{userSearchQuery}}"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Search users by email",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"if (data.length > 0 && data[0].id) {",
+									"  pm.collectionVariables.set('invitedUserId', data[0].id);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/users/search?q={{invitedUserEmail}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "search"],
+							"query": [
+								{
+									"key": "q",
+									"value": "{{invitedUserEmail}}"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Search users - query too short (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/users/search?q=a",
+							"host": ["{{baseUrl}}"],
+							"path": ["users", "search"],
+							"query": [
+								{
+									"key": "q",
+									"value": "a"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
 			"name": "Organizations",
 			"item": [
 				{
@@ -1025,6 +1267,22 @@
 				},
 				{
 					"name": "Create organization",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (data.id) {",
+									"  pm.collectionVariables.set('organizationId', data.id);",
+									"  console.log('organizationId guardado: ' + data.id);",
+									"}"
+								]
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [
@@ -1084,7 +1342,33 @@
 					}
 				},
 				{
-					"name": "Create organization invitation",
+					"name": "Create internal invitation by userId (OWNER/ADMIN)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Invitation is linked to invitedUser', function () {",
+									"  pm.expect(data.invitedUser).to.be.an('object');",
+									"  pm.expect(data.invitedUser.id).to.eql(pm.collectionVariables.get('invitedUserId'));",
+									"});",
+									"pm.test('Invitation is PENDING', function () {",
+									"  pm.expect(data.status).to.eql('PENDING');",
+									"});",
+									"if (data.token) {",
+									"  pm.collectionVariables.set('invitationToken', data.token);",
+									"  console.log('invitationToken guardado');",
+									"}"
+								]
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [
@@ -1099,26 +1383,112 @@
 						],
 						"body": {
 							"mode": "raw",
-							"raw": "{\n  \"email\": \"usuario@email.com\",\n  \"role\": \"DEVELOPER\"\n}"
+							"raw": "{\n  \"userId\": \"{{invitedUserId}}\",\n  \"role\": \"MEMBER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
 						},
 						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
 					}
 				},
 				{
-					"name": "Get my pending invitations",
+					"name": "Create invitation - duplicate PENDING (expect 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 409', function () {",
+									"  pm.response.to.have.status(409);",
+									"});",
+									"pm.test('Message mentions pending invitation', function () {",
+									"  pm.expect(pm.response.text()).to.include('pending invitation');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"userId\": \"{{invitedUserId}}\",\n  \"role\": \"MEMBER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					}
+				},
+				{
+					"name": "Get my pending invitations (invited user)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"pm.test('Response is an array', function () {",
+									"  pm.expect(data).to.be.an('array');",
+									"});",
+									"if (data.length > 0 && data[0].token) {",
+									"  pm.collectionVariables.set('invitationToken', data[0].token);",
+									"  pm.collectionVariables.set('organizationId', data[0].organizationId);",
+									"  console.log('invitationToken tomado de /organization-invitations/me');",
+									"}"
+								]
+							}
+						}
+					],
 					"request": {
 						"method": "GET",
 						"header": [
 							{
 								"key": "Authorization",
-								"value": "Bearer {{token}}"
+								"value": "Bearer {{invitedUserToken}}"
 							}
 						],
 						"url": "{{baseUrl}}/organization-invitations/me"
 					}
 				},
 				{
-					"name": "Accept organization invitation",
+					"name": "Accept invitation as another user (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"pm.test('Message says invitation does not belong to current user', function () {",
+									"  pm.expect(pm.response.text()).to.include('does not belong');",
+									"});"
+								]
+							}
+						}
+					],
 					"request": {
 						"method": "POST",
 						"header": [
@@ -1128,7 +1498,82 @@
 							}
 						],
 						"url": "{{baseUrl}}/organization-invitations/{{invitationToken}}/accept"
+					},
+					"description": "Usa el token del OWNER/ADMIN para intentar aceptar una invitacion dirigida al usuario invitado."
+				},
+				{
+					"name": "Accept organization invitation (invited user)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership is ACTIVE', function () {",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organization-invitations/{{invitationToken}}/accept"
 					}
+				},
+				{
+					"name": "Create invitation - user already member (expect 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 409', function () {",
+									"  pm.response.to.have.status(409);",
+									"});",
+									"pm.test('Message says user already belongs', function () {",
+									"  pm.expect(pm.response.text()).to.include('already belongs');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"userId\": \"{{invitedUserId}}\",\n  \"role\": \"MEMBER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					},
+					"description": "Ejecutar despues de que el usuario invitado acepte la invitacion: el usuario ya tiene Membership ACTIVE, por lo tanto debe responder 409."
 				}
 			]
 		}

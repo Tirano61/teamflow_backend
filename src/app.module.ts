@@ -9,6 +9,7 @@ import { OrganizationsModule } from './organizations/organizations.module';
 import { WorkspaceModule } from './workspace/workspace.module';
 import { FirebaseModule } from './firebase/firebase.module';
 import { MeModule } from './me/me.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
 	imports: [
@@ -45,6 +46,7 @@ import { MeModule } from './me/me.module';
 		OrganizationInvitationsModule,
 		OrganizationsModule,
 		MeModule,
+		UsersModule,
 		WorkspaceModule,
 	],
 	controllers: [AppController],
