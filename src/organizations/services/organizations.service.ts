@@ -133,4 +133,59 @@ export class OrganizationsService {
 			dto.role,
 		);
 	}
+
+	/**
+	 * Suspende un miembro de la organization (ACTIVE -> SUSPENDED).
+	 * Orden de validacion: Membership ACTIVE del requester -> permiso OWNER/ADMIN ->
+	 * reglas sobre el membership objetivo y transicion de estado (en MembershipsService).
+	 */
+	async suspendMember(
+		organizationId: string,
+		membershipId: string,
+		user: User,
+	): Promise<OrganizationMemberResponse> {
+		return this.changeMemberStatus(
+			organizationId,
+			membershipId,
+			user,
+			MembershipStatus.SUSPENDED,
+		);
+	}
+
+	/**
+	 * Reactiva un miembro suspendido de la organization (SUSPENDED -> ACTIVE).
+	 * Conserva el role que el Membership tenia antes de la suspension.
+	 */
+	async reactivateMember(
+		organizationId: string,
+		membershipId: string,
+		user: User,
+	): Promise<OrganizationMemberResponse> {
+		return this.changeMemberStatus(
+			organizationId,
+			membershipId,
+			user,
+			MembershipStatus.ACTIVE,
+		);
+	}
+
+	private async changeMemberStatus(
+		organizationId: string,
+		membershipId: string,
+		user: User,
+		newStatus: MembershipStatus,
+	): Promise<OrganizationMemberResponse> {
+		const requesterMembership = await this.membershipsService.requireActiveMembership(
+			user.id,
+			organizationId,
+		);
+		this.membershipsService.assertCanManageMemberStatus(requesterMembership);
+
+		return this.membershipsService.changeMembershipStatus(
+			organizationId,
+			membershipId,
+			requesterMembership,
+			newStatus,
+		);
+	}
 }

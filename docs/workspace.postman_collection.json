@@ -129,6 +129,14 @@
 		{
 			"key": "adminMembershipId",
 			"value": ""
+		},
+		{
+			"key": "memberRoleBeforeSuspension",
+			"value": ""
+		},
+		{
+			"key": "memberJoinedAtBeforeSuspension",
+			"value": ""
 		}
 	],
 	"item": [
@@ -2874,6 +2882,760 @@
 						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/role"
 					},
 					"description": "Rol inexistente: la validacion global del body responde 400 antes de evaluar permisos o tenant."
+				}
+			]
+		},
+		{
+			"name": "Organization Member Suspension",
+			"description": "Suspension y reactivacion de memberships (ACTIVE <-> SUSPENDED). Depende de las variables creadas por las carpetas Organizations y Organization Member Roles: organizationId, otherOrganizationId, token (OWNER), adminUserToken, invitedUserToken y los membershipIds.",
+			"item": [
+				{
+					"name": "List members before suspension (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"var invitedUserId = pm.collectionVariables.get('invitedUserId');",
+									"var adminUserId = pm.collectionVariables.get('adminUserId');",
+									"data.forEach(function (membership) {",
+									"  if (membership.role === 'OWNER') {",
+									"    pm.collectionVariables.set('ownerMembershipId', membership.id);",
+									"  }",
+									"  if (membership.user && membership.user.id === invitedUserId) {",
+									"    pm.collectionVariables.set('memberMembershipId', membership.id);",
+									"    pm.collectionVariables.set('memberRoleBeforeSuspension', membership.role);",
+									"    pm.collectionVariables.set('memberJoinedAtBeforeSuspension', membership.joinedAt);",
+									"  }",
+									"  if (membership.user && membership.user.id === adminUserId) {",
+									"    pm.collectionVariables.set('adminMembershipId', membership.id);",
+									"  }",
+									"});",
+									"pm.test('Estado previo capturado', function () {",
+									"  pm.expect(pm.collectionVariables.get('memberMembershipId')).to.not.eql('');",
+									"  pm.expect(pm.collectionVariables.get('adminMembershipId')).to.not.eql('');",
+									"  pm.expect(pm.collectionVariables.get('memberRoleBeforeSuspension')).to.not.eql('');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "Setup de la carpeta: guarda los membershipIds y, sobre todo, el role y el joinedAt que tiene el miembro ANTES de suspenderlo, para verificar despues que la suspension/reactivacion no los modifica."
+				},
+				{
+					"name": "OWNER suspends member (ACTIVE -> SUSPENDED)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership queda SUSPENDED', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(data.status).to.eql('SUSPENDED');",
+									"});",
+									"pm.test('Suspender no cambia role ni joinedAt', function () {",
+									"  pm.expect(data.role).to.eql(pm.collectionVariables.get('memberRoleBeforeSuspension'));",
+									"  pm.expect(data.joinedAt).to.eql(pm.collectionVariables.get('memberJoinedAtBeforeSuspension'));",
+									"});",
+									"pm.test('Response exposes only safe user fields', function () {",
+									"  pm.expect(data.user).to.be.an('object');",
+									"  pm.expect(data.user).to.have.property('email');",
+									"  pm.expect(data.user).to.not.have.property('password');",
+									"  pm.expect(data.user).to.not.have.property('roles');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/suspend"
+					},
+					"description": "Caso principal: el OWNER suspende a un miembro. El Membership no se elimina y conserva su role y su joinedAt."
+				},
+				{
+					"name": "Suspended member cannot access the organization (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership is not active', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}"
+					},
+					"description": "Efecto de la suspension sin revocar el JWT: el token del usuario suspendido sigue siendo valido, pero todo recurso tenant exige Membership ACTIVE."
+				},
+				{
+					"name": "Suspended member context excludes the organization (me/context)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"var organizations = data.organizations || [];",
+									"var suspendedOrganizationId = pm.collectionVariables.get('organizationId');",
+									"var otherOrganizationId = pm.collectionVariables.get('otherOrganizationId');",
+									"pm.test('La organization suspendida no aparece en el contexto', function () {",
+									"  var ids = organizations.map(function (organization) { return organization.id; });",
+									"  pm.expect(ids).to.not.include(suspendedOrganizationId);",
+									"});",
+									"pm.test('Las otras organizations ACTIVE siguen disponibles', function () {",
+									"  if (!otherOrganizationId) { pm.expect(true).to.eql(true); return; }",
+									"  var ids = organizations.map(function (organization) { return organization.id; });",
+									"  pm.expect(ids).to.include(otherOrganizationId);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/me/context"
+					},
+					"description": "GET /me/context ya se construye solo con memberships ACTIVE: la organization donde el usuario esta SUSPENDED desaparece, y las organizations donde sigue ACTIVE se mantienen."
+				},
+				{
+					"name": "Suspended member is not listed in members (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"pm.test('El membership suspendido no aparece en el listado ACTIVE', function () {",
+									"  var ids = data.map(function (membership) { return membership.id; });",
+									"  pm.expect(ids).to.not.include(pm.collectionVariables.get('memberMembershipId'));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "GET /organizations/:organizationId/members lista solo memberships ACTIVE, por lo que el miembro suspendido deja de aparecer. El membershipId se conserva en la variable para poder reactivarlo."
+				},
+				{
+					"name": "Suspend the same membership again (expect 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 409', function () {",
+									"  pm.response.to.have.status(409);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership cannot be suspended because its status is SUSPENDED', function () {",
+									"  pm.expect(data.statusCode).to.eql(409);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/suspend"
+					},
+					"description": "Transicion invalida SUSPENDED -> SUSPENDED: responde 409, igual que cancelar una invitacion que ya no esta PENDING."
+				},
+				{
+					"name": "OWNER reactivates member (SUSPENDED -> ACTIVE, role preserved)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership vuelve a ACTIVE', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"});",
+									"pm.test('Conserva exactamente el role previo a la suspension', function () {",
+									"  pm.expect(data.role).to.eql(pm.collectionVariables.get('memberRoleBeforeSuspension'));",
+									"  pm.expect(data.joinedAt).to.eql(pm.collectionVariables.get('memberJoinedAtBeforeSuspension'));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/reactivate"
+					},
+					"description": "Verificacion central del prompt: al reactivar, el Membership recupera el estado ACTIVE conservando el role y el joinedAt que tenia antes de la suspension."
+				},
+				{
+					"name": "Reactivate an already ACTIVE membership (expect 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 409', function () {",
+									"  pm.response.to.have.status(409);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership cannot be reactivated because its status is ACTIVE', function () {",
+									"  pm.expect(data.statusCode).to.eql(409);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/reactivate"
+					},
+					"description": "Transicion invalida ACTIVE -> ACTIVE: responde 409."
+				},
+				{
+					"name": "Reactivated member can access the organization again",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Vuelve con el mismo role', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('organizationId'));",
+									"  pm.expect(data.role).to.eql(pm.collectionVariables.get('memberRoleBeforeSuspension'));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}"
+					},
+					"description": "Tras la reactivacion el acceso tenant se restablece con el mismo role, sin necesidad de un nuevo login."
+				},
+				{
+					"name": "OWNER suspends ADMIN",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('ADMIN queda SUSPENDED y conserva su role', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('adminMembershipId'));",
+									"  pm.expect(data.status).to.eql('SUSPENDED');",
+									"  pm.expect(data.role).to.eql('ADMIN');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{adminMembershipId}}/suspend"
+					},
+					"description": "El alcance del OWNER incluye memberships ADMIN. La suspension no degrada el role."
+				},
+				{
+					"name": "Suspended ADMIN cannot manage members (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership is not active', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/suspend"
+					},
+					"description": "Estado del requester: un ADMIN suspendido pierde la capacidad de administrar miembros aunque conserve su role ADMIN y un JWT valido."
+				},
+				{
+					"name": "OWNER reactivates ADMIN",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('ADMIN vuelve a ACTIVE con su role intacto', function () {",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"  pm.expect(data.role).to.eql('ADMIN');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{adminMembershipId}}/reactivate"
+					},
+					"description": "El ADMIN reactivado recupera su role ADMIN y vuelve a poder administrar miembros dentro de su alcance."
+				},
+				{
+					"name": "OWNER sets member role to MEMBER (setup for ADMIN cases)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Role is MEMBER', function () {",
+									"  pm.expect(data.role).to.eql('MEMBER');",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"});",
+									"pm.collectionVariables.set('memberRoleBeforeSuspension', data.role);",
+									"pm.collectionVariables.set('memberJoinedAtBeforeSuspension', data.joinedAt);"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"MEMBER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/role"
+					},
+					"description": "Setup: deja el membership objetivo con role MEMBER para probar los casos del ADMIN y actualiza el role de referencia usado en las verificaciones de conservacion."
+				},
+				{
+					"name": "ADMIN suspends MEMBER",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('MEMBER queda SUSPENDED conservando su role', function () {",
+									"  pm.expect(data.status).to.eql('SUSPENDED');",
+									"  pm.expect(data.role).to.eql(pm.collectionVariables.get('memberRoleBeforeSuspension'));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/suspend"
+					},
+					"description": "El alcance del ADMIN incluye memberships DEVELOPER y MEMBER."
+				},
+				{
+					"name": "ADMIN reactivates MEMBER",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('MEMBER vuelve a ACTIVE con el mismo role', function () {",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"  pm.expect(data.role).to.eql(pm.collectionVariables.get('memberRoleBeforeSuspension'));",
+									"  pm.expect(data.joinedAt).to.eql(pm.collectionVariables.get('memberJoinedAtBeforeSuspension'));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/reactivate"
+					},
+					"description": "Reactivacion por parte de un ADMIN dentro de su alcance, conservando role y joinedAt."
+				},
+				{
+					"name": "ADMIN tries to suspend another ADMIN (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('ADMIN cannot modify a membership with role ADMIN', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{adminMembershipId}}/suspend"
+					},
+					"description": "Un ADMIN no alcanza memberships ADMIN. Como el target es su propio membership, este caso tambien cubre que un ADMIN no puede auto-suspenderse."
+				},
+				{
+					"name": "ADMIN tries to suspend the OWNER (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('OWNER membership cannot be suspended or reactivated from this endpoint', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{ownerMembershipId}}/suspend"
+					},
+					"description": "OWNER protegido: ningun ADMIN puede suspenderlo."
+				},
+				{
+					"name": "OWNER tries to suspend the OWNER membership (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('OWNER membership cannot be suspended or reactivated from this endpoint', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{ownerMembershipId}}/suspend"
+					},
+					"description": "OWNER protegido incluso frente a si mismo: el OWNER no puede auto-suspenderse ni suspender el membership OWNER."
+				},
+				{
+					"name": "Suspend membership cross-tenant (expect 404)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 404', function () {",
+									"  pm.response.to.have.status(404);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership not found in this organization', function () {",
+									"  pm.expect(data.statusCode).to.eql(404);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}/members/{{adminMembershipId}}/suspend"
+					},
+					"description": "Anti-IDOR: el OWNER de la organization B usa su propio organizationId con un membershipId de la organization A. El membership nunca se busca solo por id, por lo tanto responde 404 igual que un membershipId inexistente."
+				},
+				{
+					"name": "Reactivate membership cross-tenant (expect 404)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 404', function () {",
+									"  pm.response.to.have.status(404);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership not found in this organization', function () {",
+									"  pm.expect(data.statusCode).to.eql(404);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}/members/{{adminMembershipId}}/reactivate"
+					},
+					"description": "Anti-IDOR en la reactivacion: misma politica que en la suspension, el 404 no revela que el membership existe en otra organization."
+				},
+				{
+					"name": "Suspend with non-UUID membershipId (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('membershipId must be a UUID', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/not-a-uuid/suspend"
+					},
+					"description": "ParseUUIDPipe: un membershipId invalido responde 400 antes de evaluar permisos o tenant."
 				}
 			]
 		}
