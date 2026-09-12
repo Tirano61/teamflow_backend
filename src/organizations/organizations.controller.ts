@@ -42,12 +42,24 @@ export class OrganizationsController {
 		return this.organizationsService.getOrganizationBasicForUser(organizationId, user);
 	}
 
+	/// Directorio general: cualquier Membership ACTIVE, solo memberships ACTIVE.
 	@Get(':organizationId/members')
 	getOrganizationMembers(
 		@Param('organizationId', new ParseUUIDPipe()) organizationId: string,
 		@GetUser() user: User,
 	) {
 		return this.organizationsService.getOrganizationMembers(organizationId, user);
+	}
+
+	/// Listado administrativo: solo OWNER/ADMIN ACTIVE, memberships ACTIVE + SUSPENDED.
+	/// `manage` es un segmento fijo y no colisiona con las rutas `members/:membershipId/...`,
+	/// que tienen un segmento mas y otro metodo HTTP.
+	@Get(':organizationId/members/manage')
+	getOrganizationMembersForManagement(
+		@Param('organizationId', new ParseUUIDPipe()) organizationId: string,
+		@GetUser() user: User,
+	) {
+		return this.organizationsService.getOrganizationMembersForManagement(organizationId, user);
 	}
 
 	@Patch(':organizationId/members/:membershipId/role')

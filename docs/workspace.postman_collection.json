@@ -1454,7 +1454,39 @@
 					}
 				},
 				{
-					"name": "Get organization members",
+					"name": "Get organization members (directorio)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"pm.test('El directorio solo devuelve memberships ACTIVE', function () {",
+									"  var statuses = data.map(function (membership) { return membership.status; });",
+									"  pm.expect(statuses).to.not.include('SUSPENDED');",
+									"  data.forEach(function (membership) { pm.expect(membership.status).to.eql('ACTIVE'); });",
+									"});",
+									"pm.test('Cada elemento respeta OrganizationMemberResponse', function () {",
+									"  data.forEach(assertMemberContract);",
+									"});",
+									"pm.test('El OWNER aparece en su propio directorio', function () {",
+									"  var owner = data.filter(function (membership) { return membership.role === 'OWNER'; })[0];",
+									"  pm.expect(owner, 'OWNER visible').to.be.an('object');",
+									"  pm.expect(owner.status).to.eql('ACTIVE');",
+									"});"
+								]
+							}
+						}
+					],
 					"request": {
 						"method": "GET",
 						"header": [
@@ -1464,7 +1496,47 @@
 							}
 						],
 						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
-					}
+					},
+					"description": "Directorio general de miembros: quien forma parte actualmente de la organization. Accesible para cualquier Membership ACTIVE y devuelve solamente memberships ACTIVE. No es un endpoint administrativo. La respuesta usa OrganizationMemberResponse: sin createdAt, updatedAt, user.isActive ni user.roles."
+				},
+				{
+					"name": "Get organization members for management (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"pm.test('Cada elemento respeta OrganizationMemberResponse', function () {",
+									"  data.forEach(assertMemberContract);",
+									"});",
+									"pm.test('El listado administrativo devuelve memberships', function () {",
+									"  pm.expect(data.length).to.be.above(0);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/manage"
+					},
+					"description": "Listado administrativo de memberships (ACTIVE + SUSPENDED), reservado a OWNER/ADMIN ACTIVE. Mismo contrato de respuesta que el directorio. La matriz completa de acceso se verifica en la carpeta Organization Member Directory & Management."
 				},
 				{
 					"name": "Get organization basic by id (tenant-safe)",
@@ -3056,7 +3128,7 @@
 					"description": "GET /me/context ya se construye solo con memberships ACTIVE: la organization donde el usuario esta SUSPENDED desaparece, y las organizations donde sigue ACTIVE se mantienen."
 				},
 				{
-					"name": "Suspended member is not listed in members (OWNER)",
+					"name": "Suspended member disappears from the directory (OWNER)",
 					"event": [
 						{
 							"listen": "test",
@@ -3068,9 +3140,20 @@
 									"});",
 									"var data = [];",
 									"try { data = pm.response.json(); } catch (e) { data = []; }",
-									"pm.test('El membership suspendido no aparece en el listado ACTIVE', function () {",
-									"  var ids = data.map(function (membership) { return membership.id; });",
-									"  pm.expect(ids).to.not.include(pm.collectionVariables.get('memberMembershipId'));",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"function findMembership(list, membershipId) {",
+									"  return list.filter(function (membership) { return membership.id === membershipId; })[0];",
+									"}",
+									"pm.test('El directorio solo devuelve memberships ACTIVE', function () {",
+									"  var statuses = data.map(function (membership) { return membership.status; });",
+									"  pm.expect(statuses).to.not.include('SUSPENDED');",
+									"  data.forEach(function (membership) { pm.expect(membership.status).to.eql('ACTIVE'); });",
+									"});",
+									"pm.test('El membership suspendido ya no aparece en el directorio', function () {",
+									"  pm.expect(findMembership(data, pm.collectionVariables.get('memberMembershipId'))).to.eql(undefined);",
 									"});"
 								]
 							}
@@ -3086,7 +3169,52 @@
 						],
 						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
 					},
-					"description": "GET /organizations/:organizationId/members lista solo memberships ACTIVE, por lo que el miembro suspendido deja de aparecer. El membershipId se conserva en la variable para poder reactivarlo."
+					"description": "El directorio general solo lista memberships ACTIVE: despues de suspender, el miembro desaparece del listado incluso para el OWNER. El caso administrativo se verifica en el request siguiente."
+				},
+				{
+					"name": "Suspended member is still listed in management (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"function findMembership(list, membershipId) {",
+									"  return list.filter(function (membership) { return membership.id === membershipId; })[0];",
+									"}",
+									"pm.test('El membership suspendido sigue visible en el listado administrativo', function () {",
+									"  var suspended = findMembership(data, pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(suspended, 'el membership suspendido debe seguir en administracion').to.be.an('object');",
+									"  pm.expect(suspended.status).to.eql('SUSPENDED');",
+									"  pm.expect(suspended.role).to.eql(pm.collectionVariables.get('memberRoleBeforeSuspension'));",
+									"});",
+									"pm.test('Cada elemento respeta OrganizationMemberResponse', function () {",
+									"  data.forEach(assertMemberContract);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/manage"
+					},
+					"description": "GET /organizations/:organizationId/members/manage devuelve memberships ACTIVE y SUSPENDED: el OWNER conserva el membershipId del miembro suspendido y puede reactivarlo sin depender de la respuesta de la suspension."
 				},
 				{
 					"name": "Suspend the same membership again (expect 409)",
@@ -3223,6 +3351,53 @@
 						"url": "{{baseUrl}}/organizations/{{organizationId}}"
 					},
 					"description": "Tras la reactivacion el acceso tenant se restablece con el mismo role, sin necesidad de un nuevo login."
+				},
+				{
+					"name": "Reactivated member is back in the directory (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"function findMembership(list, membershipId) {",
+									"  return list.filter(function (membership) { return membership.id === membershipId; })[0];",
+									"}",
+									"pm.test('El directorio solo devuelve memberships ACTIVE', function () {",
+									"  var statuses = data.map(function (membership) { return membership.status; });",
+									"  pm.expect(statuses).to.not.include('SUSPENDED');",
+									"  data.forEach(function (membership) { pm.expect(membership.status).to.eql('ACTIVE'); });",
+									"});",
+									"pm.test('El miembro reactivado vuelve al directorio', function () {",
+									"  var member = findMembership(data, pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(member, 'el miembro reactivado debe volver al directorio').to.be.an('object');",
+									"  pm.expect(member.status).to.eql('ACTIVE');",
+									"  pm.expect(member.role).to.eql(pm.collectionVariables.get('memberRoleBeforeSuspension'));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "Cierra el ciclo directorio/administracion: al reactivar el Membership vuelve a aparecer en el directorio general con su role intacto."
 				},
 				{
 					"name": "OWNER suspends ADMIN",
@@ -3440,7 +3615,7 @@
 					"description": "Reactivacion por parte de un ADMIN dentro de su alcance, conservando role y joinedAt."
 				},
 				{
-					"name": "ADMIN tries to suspend another ADMIN (expect 403)",
+					"name": "ADMIN tries to suspend their own membership (expect 403)",
 					"event": [
 						{
 							"listen": "test",
@@ -3452,7 +3627,7 @@
 									"});",
 									"var data = {};",
 									"try { data = pm.response.json(); } catch (e) { data = {}; }",
-									"pm.test('ADMIN cannot modify a membership with role ADMIN', function () {",
+									"pm.test('A user cannot suspend or reactivate their own membership', function () {",
 									"  pm.expect(data.statusCode).to.eql(403);",
 									"});",
 									"console.log('message: ' + JSON.stringify(data.message));"
@@ -3470,7 +3645,7 @@
 						],
 						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{adminMembershipId}}/suspend"
 					},
-					"description": "Un ADMIN no alcanza memberships ADMIN. Como el target es su propio membership, este caso tambien cubre que un ADMIN no puede auto-suspenderse."
+					"description": "El target es el propio membership del ADMIN, por lo que se rechaza por la regla explicita de auto-modificacion (403). El caso de un ADMIN sobre OTRO ADMIN se verifica en la carpeta Organization Member Directory & Management, donde existe un segundo membership ADMIN."
 				},
 				{
 					"name": "ADMIN tries to suspend the OWNER (expect 403)",
@@ -3636,6 +3811,1193 @@
 						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/not-a-uuid/suspend"
 					},
 					"description": "ParseUUIDPipe: un membershipId invalido responde 400 antes de evaluar permisos o tenant."
+				}
+			]
+		},
+		{
+			"name": "Organization Member Directory & Management",
+			"description": "Separacion entre el directorio general de miembros (GET /organizations/:organizationId/members, cualquier Membership ACTIVE, solo memberships ACTIVE) y el listado administrativo (GET /organizations/:organizationId/members/manage, solo OWNER/ADMIN ACTIVE, memberships ACTIVE + SUSPENDED), mas la regla explicita de auto-modificacion en suspend/reactivate. Depende de las variables de las carpetas Organizations, Organization Member Roles y Organization Member Suspension: organizationId, token (OWNER), adminUserToken, invitedUserToken y los membershipIds. Deja la organization en el mismo estado en que la encuentra.",
+			"item": [
+				{
+					"name": "Directorio como OWNER (setup + solo ACTIVE)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"function findMembership(list, membershipId) {",
+									"  return list.filter(function (membership) { return membership.id === membershipId; })[0];",
+									"}",
+									"var invitedUserId = pm.collectionVariables.get('invitedUserId');",
+									"var adminUserId = pm.collectionVariables.get('adminUserId');",
+									"data.forEach(function (membership) {",
+									"  if (membership.role === 'OWNER') {",
+									"    pm.collectionVariables.set('ownerMembershipId', membership.id);",
+									"  }",
+									"  if (membership.user && membership.user.id === invitedUserId) {",
+									"    pm.collectionVariables.set('memberMembershipId', membership.id);",
+									"  }",
+									"  if (membership.user && membership.user.id === adminUserId) {",
+									"    pm.collectionVariables.set('adminMembershipId', membership.id);",
+									"  }",
+									"});",
+									"pm.test('membershipIds capturados', function () {",
+									"  pm.expect(pm.collectionVariables.get('ownerMembershipId')).to.not.eql('');",
+									"  pm.expect(pm.collectionVariables.get('memberMembershipId')).to.not.eql('');",
+									"  pm.expect(pm.collectionVariables.get('adminMembershipId')).to.not.eql('');",
+									"});",
+									"pm.test('El directorio solo devuelve memberships ACTIVE', function () {",
+									"  var statuses = data.map(function (membership) { return membership.status; });",
+									"  pm.expect(statuses).to.not.include('SUSPENDED');",
+									"  data.forEach(function (membership) { pm.expect(membership.status).to.eql('ACTIVE'); });",
+									"});",
+									"pm.test('Cada elemento respeta OrganizationMemberResponse', function () {",
+									"  data.forEach(assertMemberContract);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "Setup de la carpeta y fila OWNER del directorio: recaptura los membershipIds, verifica que la organization arranca sin memberships suspendidos y que la respuesta respeta OrganizationMemberResponse (sin createdAt, updatedAt, user.isActive ni user.roles)."
+				},
+				{
+					"name": "Administracion como OWNER (estado inicial)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"function findMembership(list, membershipId) {",
+									"  return list.filter(function (membership) { return membership.id === membershipId; })[0];",
+									"}",
+									"pm.test('El OWNER ve los tres memberships, sin filtrar por role', function () {",
+									"  var owner = findMembership(data, pm.collectionVariables.get('ownerMembershipId'));",
+									"  var admin = findMembership(data, pm.collectionVariables.get('adminMembershipId'));",
+									"  var member = findMembership(data, pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(owner, 'OWNER visible').to.be.an('object');",
+									"  pm.expect(owner.role).to.eql('OWNER');",
+									"  pm.expect(admin, 'ADMIN visible').to.be.an('object');",
+									"  pm.expect(member, 'MEMBER visible').to.be.an('object');",
+									"});",
+									"pm.test('Cada elemento respeta OrganizationMemberResponse', function () {",
+									"  data.forEach(assertMemberContract);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/manage"
+					},
+					"description": "Fila OWNER del listado administrativo con la organization todavia sin suspensiones: mismo contrato que el directorio y ningun role oculto."
+				},
+				{
+					"name": "Directorio como ADMIN (solo ACTIVE)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"function findMembership(list, membershipId) {",
+									"  return list.filter(function (membership) { return membership.id === membershipId; })[0];",
+									"}",
+									"pm.test('El directorio solo devuelve memberships ACTIVE', function () {",
+									"  var statuses = data.map(function (membership) { return membership.status; });",
+									"  pm.expect(statuses).to.not.include('SUSPENDED');",
+									"  data.forEach(function (membership) { pm.expect(membership.status).to.eql('ACTIVE'); });",
+									"});",
+									"pm.test('El ADMIN ve al OWNER en el directorio', function () {",
+									"  var owner = findMembership(data, pm.collectionVariables.get('ownerMembershipId'));",
+									"  pm.expect(owner, 'OWNER visible para el ADMIN').to.be.an('object');",
+									"  pm.expect(owner.role).to.eql('OWNER');",
+									"});",
+									"pm.test('Cada elemento respeta OrganizationMemberResponse', function () {",
+									"  data.forEach(assertMemberContract);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "Fila ADMIN del directorio: aunque tenga permisos administrativos, en el directorio recibe exactamente lo mismo que un MEMBER, solo memberships ACTIVE."
+				},
+				{
+					"name": "Directorio como MEMBER (solo ACTIVE, todos los roles)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"function findMembership(list, membershipId) {",
+									"  return list.filter(function (membership) { return membership.id === membershipId; })[0];",
+									"}",
+									"pm.test('El directorio solo devuelve memberships ACTIVE', function () {",
+									"  var statuses = data.map(function (membership) { return membership.status; });",
+									"  pm.expect(statuses).to.not.include('SUSPENDED');",
+									"  data.forEach(function (membership) { pm.expect(membership.status).to.eql('ACTIVE'); });",
+									"});",
+									"pm.test('Un MEMBER ve al OWNER y al ADMIN', function () {",
+									"  pm.expect(findMembership(data, pm.collectionVariables.get('ownerMembershipId')), 'OWNER visible').to.be.an('object');",
+									"  pm.expect(findMembership(data, pm.collectionVariables.get('adminMembershipId')), 'ADMIN visible').to.be.an('object');",
+									"});",
+									"pm.test('Cada elemento respeta OrganizationMemberResponse', function () {",
+									"  data.forEach(assertMemberContract);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "Fila MEMBER del directorio: el filtro es por status, no por role. Un MEMBER ACTIVE ve a todos los miembros ACTIVE, incluidos el OWNER y los ADMIN."
+				},
+				{
+					"name": "MEMBER cannot use the management list (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/manage"
+					},
+					"description": "El listado administrativo es solo para OWNER/ADMIN ACTIVE: un MEMBER recibe 403 aunque pueda usar el directorio general."
+				},
+				{
+					"name": "OWNER sets the MEMBER to DEVELOPER (setup DEVELOPER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Role is DEVELOPER', function () {",
+									"  pm.expect(data.role).to.eql('DEVELOPER');",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"});",
+									"pm.collectionVariables.set('memberRoleBeforeSuspension', data.role);"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"DEVELOPER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/role"
+					},
+					"description": "Setup: el usuario invitado pasa a DEVELOPER ACTIVE para verificar la fila DEVELOPER."
+				},
+				{
+					"name": "Directorio como DEVELOPER (solo ACTIVE)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"function findMembership(list, membershipId) {",
+									"  return list.filter(function (membership) { return membership.id === membershipId; })[0];",
+									"}",
+									"pm.test('El directorio solo devuelve memberships ACTIVE', function () {",
+									"  var statuses = data.map(function (membership) { return membership.status; });",
+									"  pm.expect(statuses).to.not.include('SUSPENDED');",
+									"  data.forEach(function (membership) { pm.expect(membership.status).to.eql('ACTIVE'); });",
+									"});",
+									"pm.test('Un DEVELOPER ve al OWNER y al ADMIN', function () {",
+									"  pm.expect(findMembership(data, pm.collectionVariables.get('ownerMembershipId')), 'OWNER visible').to.be.an('object');",
+									"  pm.expect(findMembership(data, pm.collectionVariables.get('adminMembershipId')), 'ADMIN visible').to.be.an('object');",
+									"});",
+									"pm.test('Cada elemento respeta OrganizationMemberResponse', function () {",
+									"  data.forEach(assertMemberContract);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "Fila DEVELOPER del directorio: mismo resultado que MEMBER, solo memberships ACTIVE de cualquier role."
+				},
+				{
+					"name": "DEVELOPER cannot use the management list (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/manage"
+					},
+					"description": "Un DEVELOPER ACTIVE tampoco accede al listado administrativo: 403."
+				},
+				{
+					"name": "OWNER suspends the DEVELOPER",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('El DEVELOPER queda SUSPENDED', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(data.role).to.eql('DEVELOPER');",
+									"  pm.expect(data.status).to.eql('SUSPENDED');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/suspend"
+					},
+					"description": "Setup: deja un membership SUSPENDED para contrastar directorio y administracion."
+				},
+				{
+					"name": "Suspendido: desaparece del directorio (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"function findMembership(list, membershipId) {",
+									"  return list.filter(function (membership) { return membership.id === membershipId; })[0];",
+									"}",
+									"pm.test('El directorio solo devuelve memberships ACTIVE', function () {",
+									"  var statuses = data.map(function (membership) { return membership.status; });",
+									"  pm.expect(statuses).to.not.include('SUSPENDED');",
+									"  data.forEach(function (membership) { pm.expect(membership.status).to.eql('ACTIVE'); });",
+									"});",
+									"pm.test('El miembro suspendido no esta en el directorio', function () {",
+									"  pm.expect(findMembership(data, pm.collectionVariables.get('memberMembershipId'))).to.eql(undefined);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "El directorio deja de listar al miembro suspendido incluso para el OWNER: no es un listado administrativo."
+				},
+				{
+					"name": "Suspendido: sigue en administracion (OWNER, ACTIVE + SUSPENDED)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"function findMembership(list, membershipId) {",
+									"  return list.filter(function (membership) { return membership.id === membershipId; })[0];",
+									"}",
+									"pm.test('El OWNER ve el membership SUSPENDED con su membershipId', function () {",
+									"  var suspended = findMembership(data, pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(suspended, 'el membership suspendido debe seguir en administracion').to.be.an('object');",
+									"  pm.expect(suspended.status).to.eql('SUSPENDED');",
+									"  pm.expect(suspended.role).to.eql('DEVELOPER');",
+									"});",
+									"pm.test('El OWNER tambien ve los memberships ACTIVE', function () {",
+									"  var owner = findMembership(data, pm.collectionVariables.get('ownerMembershipId'));",
+									"  var admin = findMembership(data, pm.collectionVariables.get('adminMembershipId'));",
+									"  pm.expect(owner, 'OWNER visible').to.be.an('object');",
+									"  pm.expect(owner.status).to.eql('ACTIVE');",
+									"  pm.expect(admin, 'ADMIN visible').to.be.an('object');",
+									"  pm.expect(admin.status).to.eql('ACTIVE');",
+									"});",
+									"pm.test('Cada elemento respeta OrganizationMemberResponse', function () {",
+									"  data.forEach(assertMemberContract);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/manage"
+					},
+					"description": "Fila OWNER del listado administrativo con un membership suspendido: devuelve ACTIVE + SUSPENDED y conserva el membershipId necesario para reactivar."
+				},
+				{
+					"name": "Administracion como ADMIN (ACTIVE + SUSPENDED, ve al OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"function findMembership(list, membershipId) {",
+									"  return list.filter(function (membership) { return membership.id === membershipId; })[0];",
+									"}",
+									"pm.test('El ADMIN ve el membership SUSPENDED', function () {",
+									"  var suspended = findMembership(data, pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(suspended, 'el membership suspendido debe estar visible').to.be.an('object');",
+									"  pm.expect(suspended.status).to.eql('SUSPENDED');",
+									"});",
+									"pm.test('El ADMIN ve al OWNER y a su propio membership', function () {",
+									"  var owner = findMembership(data, pm.collectionVariables.get('ownerMembershipId'));",
+									"  var self = findMembership(data, pm.collectionVariables.get('adminMembershipId'));",
+									"  pm.expect(owner, 'OWNER visible para el ADMIN').to.be.an('object');",
+									"  pm.expect(owner.role).to.eql('OWNER');",
+									"  pm.expect(self, 'membership propio visible').to.be.an('object');",
+									"  pm.expect(self.role).to.eql('ADMIN');",
+									"});",
+									"pm.test('Cada elemento respeta OrganizationMemberResponse', function () {",
+									"  data.forEach(assertMemberContract);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/manage"
+					},
+					"description": "Fila ADMIN del listado administrativo: ve ACTIVE + SUSPENDED y no se le oculta ningun role, incluido el OWNER."
+				},
+				{
+					"name": "Suspendido: el propio usuario no ve el directorio (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "Seguir apareciendo en el listado administrativo no otorga acceso tenant: el usuario SUSPENDED recibe 403 en el directorio aunque conserve un JWT valido."
+				},
+				{
+					"name": "OWNER reactivates the member from the management list",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership vuelve a ACTIVE conservando su role', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"  pm.expect(data.role).to.eql(pm.collectionVariables.get('memberRoleBeforeSuspension'));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/reactivate"
+					},
+					"description": "El membershipId obtenido del listado administrativo alcanza para reactivar al miembro."
+				},
+				{
+					"name": "Reactivado: reaparece en el directorio (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"function findMembership(list, membershipId) {",
+									"  return list.filter(function (membership) { return membership.id === membershipId; })[0];",
+									"}",
+									"pm.test('El directorio solo devuelve memberships ACTIVE', function () {",
+									"  var statuses = data.map(function (membership) { return membership.status; });",
+									"  pm.expect(statuses).to.not.include('SUSPENDED');",
+									"  data.forEach(function (membership) { pm.expect(membership.status).to.eql('ACTIVE'); });",
+									"});",
+									"pm.test('El miembro reactivado vuelve al directorio', function () {",
+									"  var member = findMembership(data, pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(member, 'el miembro reactivado debe volver al directorio').to.be.an('object');",
+									"  pm.expect(member.status).to.eql('ACTIVE');",
+									"  pm.expect(member.role).to.eql('DEVELOPER');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "Cierra el ciclo: suspender saca del directorio, reactivar devuelve al miembro con su role intacto."
+				},
+				{
+					"name": "OWNER suspends the ADMIN (setup ADMIN SUSPENDED)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('El ADMIN queda SUSPENDED', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('adminMembershipId'));",
+									"  pm.expect(data.status).to.eql('SUSPENDED');",
+									"  pm.expect(data.role).to.eql('ADMIN');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{adminMembershipId}}/suspend"
+					},
+					"description": "Setup: un ADMIN SUSPENDED para verificar que pierde el acceso a la organization y a la administracion."
+				},
+				{
+					"name": "Suspended ADMIN cannot use the directory (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "Un ADMIN SUSPENDED no accede a la organization: el directorio exige Membership ACTIVE."
+				},
+				{
+					"name": "Suspended ADMIN cannot use the management list (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/manage"
+					},
+					"description": "Un ADMIN SUSPENDED tampoco administra: el permiso OWNER/ADMIN exige Membership ACTIVE."
+				},
+				{
+					"name": "Suspended ADMIN context still excludes the organization (me/context)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"var organizations = data.organizations || [];",
+									"pm.test('La organization donde esta SUSPENDED no aparece', function () {",
+									"  var ids = organizations.map(function (organization) { return organization.id; });",
+									"  pm.expect(ids).to.not.include(pm.collectionVariables.get('organizationId'));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/me/context"
+					},
+					"description": "GET /me/context no cambio: se construye solo con memberships ACTIVE, asi que la separacion entre directorio y administracion no lo afecta."
+				},
+				{
+					"name": "OWNER reactivates the ADMIN (restaura estado)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('El ADMIN vuelve a ACTIVE', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('adminMembershipId'));",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"  pm.expect(data.role).to.eql('ADMIN');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{adminMembershipId}}/reactivate"
+					},
+					"description": "Restaura el ADMIN antes de los casos de segundo ADMIN y auto-modificacion."
+				},
+				{
+					"name": "OWNER promotes the member to ADMIN (setup segundo ADMIN)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Role is ADMIN', function () {",
+									"  pm.expect(data.role).to.eql('ADMIN');",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"});",
+									"pm.collectionVariables.set('memberRoleBeforeSuspension', data.role);"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"ADMIN\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/role"
+					},
+					"description": "Setup: crea un segundo membership ADMIN para verificar que un ADMIN ve a otros ADMIN en el listado administrativo, aunque no pueda administrarlos."
+				},
+				{
+					"name": "ADMIN ve al OWNER y a otro ADMIN en administracion",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"function assertMemberContract(membership) {",
+									"  pm.expect(Object.keys(membership).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(membership.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"}",
+									"function findMembership(list, membershipId) {",
+									"  return list.filter(function (membership) { return membership.id === membershipId; })[0];",
+									"}",
+									"pm.test('El ADMIN ve al OWNER, a otro ADMIN y a si mismo', function () {",
+									"  var owner = findMembership(data, pm.collectionVariables.get('ownerMembershipId'));",
+									"  var otherAdmin = findMembership(data, pm.collectionVariables.get('memberMembershipId'));",
+									"  var self = findMembership(data, pm.collectionVariables.get('adminMembershipId'));",
+									"  pm.expect(owner, 'OWNER visible').to.be.an('object');",
+									"  pm.expect(owner.role).to.eql('OWNER');",
+									"  pm.expect(otherAdmin, 'otro ADMIN visible').to.be.an('object');",
+									"  pm.expect(otherAdmin.role).to.eql('ADMIN');",
+									"  pm.expect(self, 'membership propio visible').to.be.an('object');",
+									"  pm.expect(self.role).to.eql('ADMIN');",
+									"});",
+									"pm.test('Cada elemento respeta OrganizationMemberResponse', function () {",
+									"  data.forEach(assertMemberContract);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/manage"
+					},
+					"description": "El listado administrativo no filtra por role: un ADMIN ve al OWNER y a otros ADMIN. Que los vea no significa que pueda administrarlos, como verifica el request siguiente."
+				},
+				{
+					"name": "ADMIN cannot suspend another ADMIN (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/suspend"
+					},
+					"description": "Visibilidad distinta de permisos: el ADMIN ve el otro membership ADMIN en administracion, pero solo puede administrar memberships DEVELOPER y MEMBER."
+				},
+				{
+					"name": "ADMIN cannot suspend the OWNER (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{ownerMembershipId}}/suspend"
+					},
+					"description": "El membership OWNER esta protegido: aparece en el listado administrativo pero no puede suspenderse, tampoco por un ADMIN."
+				},
+				{
+					"name": "OWNER sets the second ADMIN back to MEMBER (restaura estado)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Role is MEMBER', function () {",
+									"  pm.expect(data.role).to.eql('MEMBER');",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"});",
+									"pm.collectionVariables.set('memberRoleBeforeSuspension', data.role);"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"MEMBER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/role"
+					},
+					"description": "Restaura el estado inicial de la organization (OWNER, ADMIN y MEMBER ACTIVE) antes de los casos de auto-modificacion."
+				},
+				{
+					"name": "MEMBER tries to suspend their own membership (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/suspend"
+					},
+					"description": "Ningun usuario puede auto-suspenderse. Para un MEMBER el 403 llega antes, por role insuficiente."
+				},
+				{
+					"name": "ADMIN tries to suspend themselves (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{adminMembershipId}}/suspend"
+					},
+					"description": "Regla explicita de auto-modificacion: un ADMIN ACTIVE no puede suspender su propia Membership, aunque tenga permiso para suspender a otros."
+				},
+				{
+					"name": "ADMIN tries to reactivate themselves (expect 403, not 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));",
+									"pm.test('La auto-modificacion se evalua antes que la transicion de estado', function () {",
+									"  pm.expect(pm.response.code).to.not.eql(409);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{adminMembershipId}}/reactivate"
+					},
+					"description": "Caso discriminante del orden de validacion: el membership propio ya esta ACTIVE, asi que sin la regla explicita responderia 409. Con la regla responde 403."
+				},
+				{
+					"name": "OWNER tries to reactivate their own membership (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));",
+									"pm.test('El OWNER tampoco puede reactivarse a si mismo', function () {",
+									"  pm.expect(pm.response.code).to.not.eql(409);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{ownerMembershipId}}/reactivate"
+					},
+					"description": "El OWNER queda cubierto por dos reglas independientes: la auto-modificacion prohibida y el membership OWNER protegido. En ambos casos 403."
 				}
 			]
 		}
