@@ -4,6 +4,8 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { User } from '../../auth/entities/user.entity';
+import { OrganizationMemberResponse } from '../../memberships/dto/organization-member.response';
+import { UpdateMembershipRoleDto } from '../../memberships/dto/update-membership-role.dto';
 import { Membership } from '../../memberships/entities/membership.entity';
 import { MembershipStatus } from '../../memberships/enums/membership-status.enum';
 import { OrganizationRole } from '../../memberships/enums/organization-role.enum';
@@ -105,5 +107,30 @@ export class OrganizationsService {
 	async getOrganizationMembers(organizationId: string, user: User): Promise<Membership[]> {
 		await this.membershipsService.requireActiveMembership(user.id, organizationId);
 		return this.membershipsService.listActiveOrganizationMembers(organizationId);
+	}
+
+	/**
+	 * Cambia el rol de un miembro existente de la organization.
+	 * Orden de validacion: Membership ACTIVE del requester -> permiso OWNER/ADMIN ->
+	 * reglas por rol objetivo y rol solicitado (resueltas en MembershipsService).
+	 */
+	async updateMemberRole(
+		organizationId: string,
+		membershipId: string,
+		dto: UpdateMembershipRoleDto,
+		user: User,
+	): Promise<OrganizationMemberResponse> {
+		const requesterMembership = await this.membershipsService.requireActiveMembership(
+			user.id,
+			organizationId,
+		);
+		this.membershipsService.assertCanManageMemberRoles(requesterMembership);
+
+		return this.membershipsService.changeMembershipRole(
+			organizationId,
+			membershipId,
+			requesterMembership,
+			dto.role,
+		);
 	}
 }

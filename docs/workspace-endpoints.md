@@ -483,6 +483,87 @@ Autenticacion:
 - Auth: Usuario autenticado
 - Descripcion: Lista miembros ACTIVE de una organization. Valida que el usuario autenticado pertenezca a esa organization.
 
+### PATCH /organizations/:organizationId/members/:membershipId/role
+- Auth: Usuario autenticado
+- Permisos: solo Membership `ACTIVE` con role `OWNER` o `ADMIN` en esa organization. `DEVELOPER` y `MEMBER` reciben 403.
+- Descripcion: Cambia el role de un miembro existente de la organization. No crea ni elimina memberships, no modifica `status` y no transfiere ownership.
+- Parametros:
+  - `organizationId` (path, UUID) -> si no es UUID, 400
+  - `membershipId` (path, UUID) -> si no es UUID, 400
+- Body:
+```json
+{
+  "role": "DEVELOPER"
+}
+```
+- Roles asignables por este endpoint: `ADMIN` | `DEVELOPER` | `MEMBER`. `OWNER` no es asignable -> 400.
+
+#### Reglas OWNER
+- puede modificar memberships con role `ADMIN`, `DEVELOPER` o `MEMBER`
+- puede asignar `ADMIN`, `DEVELOPER` o `MEMBER`
+- no puede asignar `OWNER` -> 400
+- no puede modificar el membership `OWNER`, incluido el suyo propio -> 403
+
+#### Reglas ADMIN
+- puede modificar memberships con role `DEVELOPER` o `MEMBER`
+- puede asignar `DEVELOPER` o `MEMBER`
+- no puede modificar el membership `OWNER` -> 403
+- no puede modificar otro membership `ADMIN` -> 403 (por la misma regla tampoco puede modificar el suyo, que tambien es ADMIN)
+- no puede convertir a nadie en `ADMIN` -> 403
+- no puede asignar `OWNER` -> 400
+
+#### OWNER protegido
+- El membership cuyo role actual es `OWNER` no puede modificarse desde este endpoint, sin importar quien sea el requester.
+- Un OWNER tampoco puede quitarse a si mismo el role `OWNER` aca.
+- La transferencia de ownership no esta implementada todavia y sera un flujo aparte.
+
+#### Orden de validacion
+1. Body valido (ValidationPipe global: `whitelist` + `forbidNonWhitelisted`): `role` debe ser `ADMIN`, `DEVELOPER` o `MEMBER` -> si no, 400. Esta validacion ocurre antes que cualquier regla de permisos o de tenant.
+2. El requester debe tener Membership `ACTIVE` en `organizationId` -> si no, 403.
+3. El requester debe ser `OWNER` o `ADMIN` -> si no, 403.
+4. El membership objetivo debe existir **dentro de `organizationId`** -> si no, 404.
+5. El membership objetivo debe estar `ACTIVE` -> si no, 409.
+6. El membership objetivo no puede tener role `OWNER` -> si lo tiene, 403.
+7. Reglas OWNER vs ADMIN sobre el role actual del objetivo y el role solicitado -> si no aplican, 403.
+
+#### Role repetido (idempotencia)
+- Si el miembro ya tiene el role solicitado, la respuesta es `200` con el objeto sin cambios y **no** se escribe en base.
+- Se eligio idempotencia y no 409 porque es un PATCH de atributo, igual que `PATCH /workspace/modules/:id/active` y equivalentes. El 409 del proyecto se reserva para transiciones de estado invalidas (por ejemplo cancelar una invitacion que no esta `PENDING`) y aqui se usa solo para el membership objetivo no `ACTIVE`.
+
+#### Proteccion tenant / anti-IDOR
+- El membership objetivo **nunca** se busca solo por `membershipId`: la consulta siempre incluye `organization_id = :organizationId`.
+- Un OWNER de la organization A no puede cambiar roles en la organization B:
+  - si usa el `organizationId` de B en el path -> 403 (no tiene Membership ACTIVE en B)
+  - si usa el `organizationId` de A con un `membershipId` de B -> 404 (ese membership no existe dentro de A)
+- No se filtra existencia entre organizations: el 404 cross-tenant es identico al de un `membershipId` inexistente.
+
+#### Concurrencia
+- El UPDATE es condicional sobre el role previo y `status = ACTIVE`. Si otro request cambio el role en el medio, responde 409 y no pisa el cambio.
+
+- Codigo de exito: `200`.
+- Respuesta:
+```json
+{
+  "id": "7f1a2b3c-4d5e-4f60-8a1b-2c3d4e5f6071",
+  "role": "DEVELOPER",
+  "status": "ACTIVE",
+  "joinedAt": "2026-09-06T20:00:00.000Z",
+  "user": {
+    "id": "4c0d3f5a-4d0d-4b0b-9d2a-8a4d1f0b2c31",
+    "email": "usuario@email.com",
+    "fullName": "Usuario Invitado"
+  }
+}
+```
+- Errores:
+  - 400 `role` ausente, con valor invalido, `OWNER`, o body con campos no permitidos
+  - 400 `organizationId` o `membershipId` no son UUID
+  - 401 sin token valido
+  - 403 requester sin Membership en la organization, Membership no `ACTIVE`, role insuficiente, regla OWNER/ADMIN no cumplida, o membership objetivo `OWNER`
+  - 404 membership inexistente o perteneciente a otra organization
+  - 409 membership objetivo no `ACTIVE` (por ejemplo `SUSPENDED`), o cambio concurrente de role
+- Fuera de alcance de este endpoint: transferencia de OWNER, suspender/reactivar miembros, eliminar miembros, salir de la organization, historial de roles y auditoria.
+
 ### POST /organizations/:organizationId/invitations
 - Auth: Usuario autenticado
 - Descripcion: Crea una invitacion **interna** dirigida a un usuario registrado de TeamFlow. Solo roles OWNER y ADMIN pueden crear invitaciones.

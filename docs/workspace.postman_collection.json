@@ -117,6 +117,18 @@
 		{
 			"key": "otherOrganizationId",
 			"value": ""
+		},
+		{
+			"key": "ownerMembershipId",
+			"value": ""
+		},
+		{
+			"key": "memberMembershipId",
+			"value": ""
+		},
+		{
+			"key": "adminMembershipId",
+			"value": ""
 		}
 	],
 	"item": [
@@ -2222,6 +2234,646 @@
 						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
 					},
 					"description": "Para forzar el caso: crear una invitacion PENDING y vencerla en base de datos (UPDATE organization_invitations SET expires_at = now() - interval '1 day' WHERE id = '<invitationId>'), luego ejecutar este request. El backend la marca EXPIRED antes de responder y nunca la devuelve como PENDING."
+				}
+			]
+		},
+		{
+			"name": "Organization Member Roles",
+			"description": "PATCH /organizations/:organizationId/members/:membershipId/role. Ejecutar despues de la carpeta Organizations: necesita organizationId, otherOrganizationId, invitedUserId con Membership MEMBER y adminUserId con Membership ADMIN ya aceptados. Los requests estan en orden: cada uno deja el estado que espera el siguiente. Al terminar, el usuario invitado queda como DEVELOPER en la organization principal.",
+			"item": [
+				{
+					"name": "List members and capture membershipIds (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"var invitedUserId = pm.collectionVariables.get('invitedUserId');",
+									"var adminUserId = pm.collectionVariables.get('adminUserId');",
+									"data.forEach(function (membership) {",
+									"  if (membership.role === 'OWNER') {",
+									"    pm.collectionVariables.set('ownerMembershipId', membership.id);",
+									"  }",
+									"  if (membership.user && membership.user.id === invitedUserId) {",
+									"    pm.collectionVariables.set('memberMembershipId', membership.id);",
+									"  }",
+									"  if (membership.user && membership.user.id === adminUserId) {",
+									"    pm.collectionVariables.set('adminMembershipId', membership.id);",
+									"  }",
+									"});",
+									"pm.test('membershipIds capturados', function () {",
+									"  pm.expect(pm.collectionVariables.get('ownerMembershipId')).to.not.eql('');",
+									"  pm.expect(pm.collectionVariables.get('memberMembershipId')).to.not.eql('');",
+									"  pm.expect(pm.collectionVariables.get('adminMembershipId')).to.not.eql('');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "Setup de la carpeta: guarda ownerMembershipId, memberMembershipId (usuario invitado) y adminMembershipId (usuario admin) a partir del listado de miembros."
+				},
+				{
+					"name": "OWNER changes MEMBER to DEVELOPER",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Role is DEVELOPER and membership stays ACTIVE', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(data.role).to.eql('DEVELOPER');",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"});",
+									"pm.test('Response exposes only safe user fields', function () {",
+									"  pm.expect(data.user).to.be.an('object');",
+									"  pm.expect(data.user).to.have.property('email');",
+									"  pm.expect(data.user).to.not.have.property('password');",
+									"  pm.expect(data.user).to.not.have.property('roles');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"DEVELOPER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/role"
+					},
+					"description": "Caso principal: el OWNER promueve a un MEMBER a DEVELOPER."
+				},
+				{
+					"name": "OWNER repeats DEVELOPER role (idempotente, expect 200)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Role is DEVELOPER and membership stays ACTIVE', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(data.role).to.eql('DEVELOPER');",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"});",
+									"pm.test('Response exposes only safe user fields', function () {",
+									"  pm.expect(data.user).to.be.an('object');",
+									"  pm.expect(data.user).to.have.property('email');",
+									"  pm.expect(data.user).to.not.have.property('password');",
+									"  pm.expect(data.user).to.not.have.property('roles');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"DEVELOPER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/role"
+					},
+					"description": "Pedir el rol que el miembro ya tiene responde 200 con el objeto sin cambios y no escribe en base. Decision documentada: idempotencia, no 409."
+				},
+				{
+					"name": "OWNER changes DEVELOPER to ADMIN",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Role is ADMIN and membership stays ACTIVE', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(data.role).to.eql('ADMIN');",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"});",
+									"pm.test('Response exposes only safe user fields', function () {",
+									"  pm.expect(data.user).to.be.an('object');",
+									"  pm.expect(data.user).to.have.property('email');",
+									"  pm.expect(data.user).to.not.have.property('password');",
+									"  pm.expect(data.user).to.not.have.property('roles');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"ADMIN\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/role"
+					},
+					"description": "El OWNER si puede asignar ADMIN. Deja al usuario invitado como ADMIN para el siguiente caso."
+				},
+				{
+					"name": "ADMIN tries to modify another ADMIN (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('ADMIN cannot modify a membership with role ADMIN', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"MEMBER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/role"
+					},
+					"description": "Un ADMIN no puede tocar memberships con rol ADMIN: su alcance es DEVELOPER y MEMBER."
+				},
+				{
+					"name": "OWNER changes ADMIN back to MEMBER (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Role is MEMBER and membership stays ACTIVE', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(data.role).to.eql('MEMBER');",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"});",
+									"pm.test('Response exposes only safe user fields', function () {",
+									"  pm.expect(data.user).to.be.an('object');",
+									"  pm.expect(data.user).to.have.property('email');",
+									"  pm.expect(data.user).to.not.have.property('password');",
+									"  pm.expect(data.user).to.not.have.property('roles');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"MEMBER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/role"
+					},
+					"description": "El OWNER degrada al ADMIN a MEMBER. Deja el estado que necesita el caso de ADMIN cambiando MEMBER a DEVELOPER."
+				},
+				{
+					"name": "ADMIN changes MEMBER to DEVELOPER",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Role is DEVELOPER and membership stays ACTIVE', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(data.role).to.eql('DEVELOPER');",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"});",
+									"pm.test('Response exposes only safe user fields', function () {",
+									"  pm.expect(data.user).to.be.an('object');",
+									"  pm.expect(data.user).to.have.property('email');",
+									"  pm.expect(data.user).to.not.have.property('password');",
+									"  pm.expect(data.user).to.not.have.property('roles');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"DEVELOPER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/role"
+					},
+					"description": "Caso permitido para ADMIN: modificar un MEMBER y asignarle DEVELOPER."
+				},
+				{
+					"name": "ADMIN tries to assign ADMIN (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('ADMIN cannot assign the ADMIN role', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"ADMIN\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/role"
+					},
+					"description": "Un ADMIN no puede convertir a nadie en ADMIN, aunque el objetivo si este dentro de su alcance."
+				},
+				{
+					"name": "ADMIN tries to modify OWNER (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('OWNER membership cannot be modified from this endpoint', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"MEMBER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{ownerMembershipId}}/role"
+					},
+					"description": "El membership OWNER esta protegido: ningun ADMIN puede degradarlo."
+				},
+				{
+					"name": "OWNER tries to modify the OWNER membership (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('OWNER membership cannot be modified from this endpoint', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"ADMIN\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{ownerMembershipId}}/role"
+					},
+					"description": "Ni el propio OWNER puede quitarse el rol OWNER desde este endpoint. La transferencia de ownership es otra fase."
+				},
+				{
+					"name": "OWNER tries to assign OWNER (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('OWNER is not an assignable role', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"OWNER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/role"
+					},
+					"description": "OWNER no es un rol asignable por este endpoint: lo rechaza la validacion del body."
+				},
+				{
+					"name": "Change role cross-tenant membershipId (expect 404)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 404', function () {",
+									"  pm.response.to.have.status(404);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership not found in this organization', function () {",
+									"  pm.expect(data.statusCode).to.eql(404);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"DEVELOPER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}/members/{{adminMembershipId}}/role"
+					},
+					"description": "Anti-IDOR: el OWNER de la organization B usa su propio organizationId con un membershipId de la organization A. El membership nunca se busca solo por id, por lo tanto responde 404 igual que un membershipId inexistente."
+				},
+				{
+					"name": "Change role with invalid role (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('role must be ADMIN, DEVELOPER or MEMBER', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "PATCH",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"role\": \"SUPERADMIN\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/role"
+					},
+					"description": "Rol inexistente: la validacion global del body responde 400 antes de evaluar permisos o tenant."
 				}
 			]
 		}

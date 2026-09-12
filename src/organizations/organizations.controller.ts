@@ -4,11 +4,13 @@ import {
 	Get,
 	Param,
 	ParseUUIDPipe,
+	Patch,
 	Post,
 } from '@nestjs/common';
 import { Auth } from '../auth/decorators/auth.decorator';
 import { GetUser } from '../auth/decorators/get-user.decorator';
 import { User } from '../auth/entities/user.entity';
+import { UpdateMembershipRoleDto } from '../memberships/dto/update-membership-role.dto';
 import { OrganizationInvitationsService } from '../organization_invitations/services/organization-invitations.service';
 import { CreateOrganizationInvitationDto } from '../organization_invitations/dto/create-organization-invitation.dto';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
@@ -46,6 +48,16 @@ export class OrganizationsController {
 		@GetUser() user: User,
 	) {
 		return this.organizationsService.getOrganizationMembers(organizationId, user);
+	}
+
+	@Patch(':organizationId/members/:membershipId/role')
+	updateMemberRole(
+		@Param('organizationId', new ParseUUIDPipe()) organizationId: string,
+		@Param('membershipId', new ParseUUIDPipe()) membershipId: string,
+		@Body() dto: UpdateMembershipRoleDto,
+		@GetUser() user: User,
+	) {
+		return this.organizationsService.updateMemberRole(organizationId, membershipId, dto, user);
 	}
 
 	@Post(':organizationId/invitations')
