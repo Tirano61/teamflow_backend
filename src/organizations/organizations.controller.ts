@@ -60,6 +60,24 @@ export class OrganizationsController {
 		return this.organizationsService.updateMemberRole(organizationId, membershipId, dto, user);
 	}
 
+	@Post(':organizationId/members/:membershipId/suspend')
+	suspendMember(
+		@Param('organizationId', new ParseUUIDPipe()) organizationId: string,
+		@Param('membershipId', new ParseUUIDPipe()) membershipId: string,
+		@GetUser() user: User,
+	) {
+		return this.organizationsService.suspendMember(organizationId, membershipId, user);
+	}
+
+	@Post(':organizationId/members/:membershipId/reactivate')
+	reactivateMember(
+		@Param('organizationId', new ParseUUIDPipe()) organizationId: string,
+		@Param('membershipId', new ParseUUIDPipe()) membershipId: string,
+		@GetUser() user: User,
+	) {
+		return this.organizationsService.reactivateMember(organizationId, membershipId, user);
+	}
+
 	@Post(':organizationId/invitations')
 	createInvitation(
 		@Param('organizationId', new ParseUUIDPipe()) organizationId: string,

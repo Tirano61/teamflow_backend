@@ -482,6 +482,7 @@ Autenticacion:
 ### GET /organizations/:organizationId/members
 - Auth: Usuario autenticado
 - Descripcion: Lista miembros ACTIVE de una organization. Valida que el usuario autenticado pertenezca a esa organization.
+- Los memberships `SUSPENDED` **no** aparecen en este listado. Hoy no existe un listado de miembros suspendidos: para reactivar uno hay que conservar el `membershipId` (por ejemplo, el que devuelve la respuesta de suspension).
 
 ### PATCH /organizations/:organizationId/members/:membershipId/role
 - Auth: Usuario autenticado
@@ -562,7 +563,98 @@ Autenticacion:
   - 403 requester sin Membership en la organization, Membership no `ACTIVE`, role insuficiente, regla OWNER/ADMIN no cumplida, o membership objetivo `OWNER`
   - 404 membership inexistente o perteneciente a otra organization
   - 409 membership objetivo no `ACTIVE` (por ejemplo `SUSPENDED`), o cambio concurrente de role
-- Fuera de alcance de este endpoint: transferencia de OWNER, suspender/reactivar miembros, eliminar miembros, salir de la organization, historial de roles y auditoria.
+- Fuera de alcance de este endpoint: transferencia de OWNER, eliminar miembros, salir de la organization, historial de roles y auditoria. Suspender y reactivar miembros tienen endpoints propios (`POST .../members/:membershipId/suspend` y `.../reactivate`) y no cambian el role.
+
+### POST /organizations/:organizationId/members/:membershipId/suspend
+### POST /organizations/:organizationId/members/:membershipId/reactivate
+- Auth: Usuario autenticado
+- Permisos: solo Membership `ACTIVE` con role `OWNER` o `ADMIN` en esa organization. `DEVELOPER` y `MEMBER` reciben 403.
+- Descripcion: Cambia unicamente el `status` de un Membership existente.
+  - `suspend`: `ACTIVE` -> `SUSPENDED`
+  - `reactivate`: `SUSPENDED` -> `ACTIVE`
+- No elimina el Membership, no lo recrea y no modifica `role`, `joinedAt`, `user` ni `organization`. Al reactivar, el miembro vuelve con exactamente el mismo role que tenia antes de la suspension.
+- Parametros:
+  - `organizationId` (path, UUID) -> si no es UUID, 400
+  - `membershipId` (path, UUID) -> si no es UUID, 400
+- Body: no llevan body.
+
+#### Reglas OWNER
+- puede suspender y reactivar memberships con role `ADMIN`, `DEVELOPER` o `MEMBER`
+- no puede suspender ni reactivar el membership `OWNER`, incluido el suyo propio -> 403
+
+#### Reglas ADMIN
+- puede suspender y reactivar memberships con role `DEVELOPER` o `MEMBER`
+- no puede suspender ni reactivar el membership `OWNER` -> 403
+- no puede suspender ni reactivar otro membership `ADMIN` -> 403 (por la misma regla tampoco puede suspenderse a si mismo, que tambien es ADMIN)
+
+#### OWNER protegido
+- El membership cuyo role actual es `OWNER` no puede suspenderse ni reactivarse desde estos endpoints, sin importar quien sea el requester.
+- Como consecuencia de las reglas de alcance, ningun requester puede auto-suspenderse: el OWNER esta protegido y un ADMIN no alcanza a otros ADMIN (ni a si mismo).
+
+#### Estado del requester
+- El requester debe tener Membership `ACTIVE` en esa organization. Un OWNER o ADMIN `SUSPENDED` no puede administrar miembros -> 403.
+
+#### Orden de validacion
+1. `organizationId` y `membershipId` deben ser UUID -> si no, 400.
+2. El requester debe tener Membership `ACTIVE` en `organizationId` -> si no, 403.
+3. El requester debe ser `OWNER` o `ADMIN` -> si no, 403.
+4. El membership objetivo debe existir **dentro de `organizationId`** -> si no, 404.
+5. El membership objetivo no puede tener role `OWNER` -> si lo tiene, 403.
+6. Reglas OWNER vs ADMIN sobre el role actual del objetivo -> si no aplican, 403.
+7. La transicion de estado debe ser valida -> si no, 409.
+
+- Los permisos se evaluan **antes** que el estado: un requester sin alcance sobre el membership objetivo recibe 403 y no descubre si ese membership esta `ACTIVE` o `SUSPENDED`.
+
+#### Transiciones invalidas
+- Suspender un membership que ya esta `SUSPENDED` -> 409.
+- Reactivar un membership que ya esta `ACTIVE` -> 409.
+- Se usa 409 y no idempotencia 200 porque son transiciones de estado, igual que cancelar una invitacion que no esta `PENDING`. La idempotencia 200 del proyecto se reserva para PATCH de atributo, como `PATCH .../members/:membershipId/role`.
+
+#### Efecto de la suspension
+- No hay revocacion global del JWT: el token del usuario suspendido sigue siendo valido.
+- El acceso tenant se corta igual, porque todo recurso scoped por organization exige Membership `ACTIVE`. Un usuario `SUSPENDED` en esa organization recibe 403 en, por ejemplo:
+  - `GET /organizations/:organizationId`
+  - `GET /organizations/:organizationId/members`
+  - `GET /organizations/:organizationId/invitations`
+  - toda ruta `/organizations/:organizationId/workspace/...` (modules, components, tags, discussions, mensajes, asignaciones y contexto)
+- El usuario global no se modifica: sigue accediendo con normalidad a otras organizations donde tenga Membership `ACTIVE`.
+- `GET /me/context` deja de listar esa organization mientras el Membership este `SUSPENDED`, porque el contexto ya se construye solo con memberships `ACTIVE` (no requirio cambios). Las invitaciones pendientes del usuario no se ven afectadas.
+- El membership suspendido tampoco aparece en `GET /organizations/:organizationId/members`, que lista solo `ACTIVE`.
+- Los datos creados por el usuario (discussions, mensajes, asignaciones) no se modifican ni se eliminan.
+
+#### Proteccion tenant / anti-IDOR
+- El membership objetivo **nunca** se busca solo por `membershipId`: la consulta siempre incluye `organization_id = :organizationId`.
+- Un OWNER de la organization A no puede suspender ni reactivar memberships de la organization B:
+  - si usa el `organizationId` de B en el path -> 403 (no tiene Membership ACTIVE en B)
+  - si usa el `organizationId` de A con un `membershipId` de B -> 404 (ese membership no existe dentro de A)
+- No se filtra existencia entre organizations: el 404 cross-tenant es identico al de un `membershipId` inexistente.
+
+#### Concurrencia
+- El UPDATE es condicional sobre el status esperado (`ACTIVE` para suspender, `SUSPENDED` para reactivar) y escribe unicamente la columna `status`.
+- Si otro request cambio el status en el medio, responde 409 y no pisa el cambio.
+
+- Codigo de exito: `201` (comportamiento por defecto de Nest para POST en este proyecto, igual que `POST .../invitations/:invitationId/cancel`).
+- Respuesta: mismo contrato seguro que `GET /organizations/:organizationId/members` y que el cambio de role. No devuelve la entidad `user` completa.
+```json
+{
+  "id": "7f1a2b3c-4d5e-4f60-8a1b-2c3d4e5f6071",
+  "role": "DEVELOPER",
+  "status": "SUSPENDED",
+  "joinedAt": "2026-09-06T20:00:00.000Z",
+  "user": {
+    "id": "4c0d3f5a-4d0d-4b0b-9d2a-8a4d1f0b2c31",
+    "email": "usuario@email.com",
+    "fullName": "Usuario Invitado"
+  }
+}
+```
+- Errores:
+  - 400 `organizationId` o `membershipId` no son UUID
+  - 401 sin token valido
+  - 403 requester sin Membership en la organization, Membership del requester no `ACTIVE`, role insuficiente, membership objetivo `OWNER`, o regla OWNER/ADMIN no cumplida
+  - 404 membership inexistente o perteneciente a otra organization
+  - 409 transicion invalida (`ACTIVE -> ACTIVE`, `SUSPENDED -> SUSPENDED`) o cambio concurrente de status
+- Fuera de alcance de estos endpoints: eliminar Membership, salir de la organization, transferencia de OWNER, cambio de role, historial/auditoria y notificaciones.
 
 ### POST /organizations/:organizationId/invitations
 - Auth: Usuario autenticado
