@@ -479,10 +479,136 @@ Autenticacion:
 - Seguridad:
   - Si el usuario no pertenece a la organization o su Membership no esta ACTIVE, retorna 403.
 
+### Miembros de la organization: directorio vs administracion
+
+Son dos conceptos distintos y tienen endpoints distintos.
+
+| Concepto | Endpoint | Quien accede | Que devuelve |
+| -------- | -------- | ------------ | ------------ |
+| Directorio general | `GET /organizations/:organizationId/members` | cualquier Membership `ACTIVE` (`OWNER`, `ADMIN`, `DEVELOPER`, `MEMBER`) | solo memberships `ACTIVE` |
+| Administracion | `GET /organizations/:organizationId/members/manage` | solo `OWNER` o `ADMIN` `ACTIVE` | memberships `ACTIVE` + `SUSPENDED` |
+
+- El **directorio** responde "quien forma parte actualmente de la organization". No es una pantalla administrativa.
+- La **administracion** es el listado desde el que se cambian roles y se suspende/reactiva. Es el unico que expone memberships `SUSPENDED`.
+- Ninguno de los dos filtra por role: en ambos aparecen `OWNER`, `ADMIN`, `DEVELOPER` y `MEMBER`. La unica diferencia es el `status`.
+- Los dos usan el mismo contrato de respuesta (`OrganizationMemberResponse`), igual que las respuestas de cambio de role, suspension y reactivacion.
+
 ### GET /organizations/:organizationId/members
 - Auth: Usuario autenticado
-- Descripcion: Lista miembros ACTIVE de una organization. Valida que el usuario autenticado pertenezca a esa organization.
-- Los memberships `SUSPENDED` **no** aparecen en este listado. Hoy no existe un listado de miembros suspendidos: para reactivar uno hay que conservar el `membershipId` (por ejemplo, el que devuelve la respuesta de suspension).
+- Permisos: cualquier Membership `ACTIVE` de esa organization (`OWNER`, `ADMIN`, `DEVELOPER` o `MEMBER`). El requester con Membership `SUSPENDED` o sin Membership recibe 403.
+- Descripcion: Directorio general de miembros de la organization. Devuelve **solamente** memberships `ACTIVE`, de cualquier role, y el resultado es identico para todos los roles del requester.
+- **No es un endpoint administrativo**: no expone memberships `SUSPENDED`. Para administrar memberships existe `GET /organizations/:organizationId/members/manage`.
+- Parametros:
+  - `organizationId` (path, UUID) -> si no es UUID, 400
+- No recibe query params: no hay filtros configurables ni paginacion.
+
+#### Que devuelve
+| Requester | ACTIVE visibles | SUSPENDED visibles |
+| --------- | --------------- | ------------------ |
+| OWNER     | Si              | No                 |
+| ADMIN     | Si              | No                 |
+| DEVELOPER | Si              | No                 |
+| MEMBER    | Si              | No                 |
+
+- El filtro es por `status`, nunca por role: cualquier requester `ACTIVE` ve los memberships `ACTIVE` con role `OWNER`, `ADMIN`, `DEVELOPER` y `MEMBER`.
+- Un miembro suspendido **desaparece** de este listado para todos, incluido el `OWNER`. Vuelve a aparecer cuando se lo reactiva.
+- Orden: por `createdAt` ascendente.
+
+#### Proteccion tenant
+- La query siempre esta scoped por `organizationId` y se ejecuta despues de validar el Membership `ACTIVE` del requester en esa misma organization.
+- Un usuario no puede listar miembros de una organization a la que no pertenece -> 403, sin distinguir si la organization existe.
+
+- Respuesta: array de `OrganizationMemberResponse`. Es una vista explicita, no la entidad TypeORM: no incluye `createdAt`, `updatedAt`, `user.isActive`, `user.roles` ni `password`.
+```json
+[
+  {
+    "id": "7f1a2b3c-4d5e-4f60-8a1b-2c3d4e5f6071",
+    "role": "MEMBER",
+    "status": "ACTIVE",
+    "joinedAt": "2026-09-06T20:00:00.000Z",
+    "user": {
+      "id": "4c0d3f5a-4d0d-4b0b-9d2a-8a4d1f0b2c31",
+      "email": "usuario@email.com",
+      "fullName": "Usuario Invitado"
+    }
+  }
+]
+```
+- Errores:
+  - 400 `organizationId` no es UUID
+  - 401 sin token valido
+  - 403 requester sin Membership en la organization o con Membership no `ACTIVE`
+- Fuera de alcance de este endpoint: paginacion, filtros configurables por `status` o `role`, busqueda, eliminacion de miembros e historial/auditoria.
+
+### GET /organizations/:organizationId/members/manage
+- Auth: Usuario autenticado
+- Permisos: solo Membership `ACTIVE` con role `OWNER` o `ADMIN` en esa organization. `DEVELOPER` y `MEMBER` reciben 403. Un `OWNER`/`ADMIN` `SUSPENDED` tambien recibe 403.
+- Descripcion: Listado administrativo de memberships de la organization. Devuelve memberships `ACTIVE` **y** `SUSPENDED`, de cualquier role. Es el listado que alimenta la pantalla de administracion de miembros, desde la que se usan `PATCH .../members/:membershipId/role`, `POST .../members/:membershipId/suspend` y `POST .../members/:membershipId/reactivate`.
+- Ruta: `manage` es un segmento fijo y no colisiona con las rutas `.../members/:membershipId/...`, que tienen un segmento mas y otro metodo HTTP.
+- Parametros:
+  - `organizationId` (path, UUID) -> si no es UUID, 400
+- No recibe query params: no hay filtros configurables ni paginacion.
+
+#### Que devuelve
+| Requester | Accede   | ACTIVE visibles | SUSPENDED visibles |
+| --------- | -------- | --------------- | ------------------ |
+| OWNER     | Si       | Si              | Si                 |
+| ADMIN     | Si       | Si              | Si                 |
+| DEVELOPER | No (403) | -               | -                  |
+| MEMBER    | No (403) | -               | -                  |
+
+- No filtra por role: `OWNER` y `ADMIN` ven memberships `OWNER`, `ADMIN`, `DEVELOPER` y `MEMBER`, en cualquiera de los dos status.
+- Orden: por `createdAt` ascendente.
+
+#### Visibilidad vs permisos
+- Ver un membership en este listado **no** implica poder administrarlo.
+- Un `ADMIN` ve al `OWNER` y a otros `ADMIN`, pero no puede cambiarles el role ni el status (403 en `PATCH .../members/:membershipId/role`, `POST .../suspend` y `POST .../reactivate`).
+- Un `ADMIN` solo puede administrar memberships `DEVELOPER` y `MEMBER`.
+- El membership `OWNER` esta protegido: aparece en el listado, pero no puede degradarse, suspenderse ni reactivarse desde estos endpoints, ni siquiera por el propio `OWNER`. La transferencia de ownership no esta implementada.
+- Las reglas administrativas son las documentadas en esos endpoints y no cambiaron.
+
+#### Miembros suspendidos
+- Un Membership `SUSPENDED` sigue perteneciendo a la organization: conserva su `id` (`membershipId`), su `role`, su `joinedAt` y su `user`.
+- Por eso `OWNER`/`ADMIN` pueden suspender a un miembro, recargar este listado y seguir obteniendo su `membershipId` para reactivarlo, aunque ese miembro ya no aparezca en el directorio general.
+- Aparecer aca no otorga acceso tenant: el usuario `SUSPENDED` sigue recibiendo 403 en todos los recursos scoped por esa organization, incluidos el directorio y este mismo endpoint.
+- `GET /me/context` no cambio: sigue listando solo organizations donde el usuario tiene Membership `ACTIVE`, por lo que una organization donde esta `SUSPENDED` no aparece.
+
+#### Proteccion tenant
+- Orden de validacion: Membership `ACTIVE` del requester -> permiso `OWNER`/`ADMIN` -> query scoped por `organizationId`.
+- Un usuario que no pertenece a la organization recibe 403, sin distinguir si la organization existe.
+
+- Respuesta: array de `OrganizationMemberResponse`, el mismo contrato que el directorio. No expone `createdAt`, `updatedAt`, `user.isActive`, `user.roles` ni `password`.
+```json
+[
+  {
+    "id": "6b0c1d2e-3f40-4a51-9b62-7c8d9e0f1a23",
+    "role": "OWNER",
+    "status": "ACTIVE",
+    "joinedAt": "2026-09-01T10:00:00.000Z",
+    "user": {
+      "id": "1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9",
+      "email": "owner@email.com",
+      "fullName": "Owner Organization"
+    }
+  },
+  {
+    "id": "7f1a2b3c-4d5e-4f60-8a1b-2c3d4e5f6071",
+    "role": "DEVELOPER",
+    "status": "SUSPENDED",
+    "joinedAt": "2026-09-06T20:00:00.000Z",
+    "user": {
+      "id": "4c0d3f5a-4d0d-4b0b-9d2a-8a4d1f0b2c31",
+      "email": "usuario@email.com",
+      "fullName": "Usuario Invitado"
+    }
+  }
+]
+```
+- Errores:
+  - 400 `organizationId` no es UUID
+  - 401 sin token valido
+  - 403 requester sin Membership en la organization, con Membership no `ACTIVE`, o con role `DEVELOPER`/`MEMBER`
+- Fuera de alcance de este endpoint: paginacion, filtros configurables por `status` o `role`, busqueda, eliminacion de miembros, transferencia de ownership, salir de la organization e historial/auditoria.
 
 ### PATCH /organizations/:organizationId/members/:membershipId/role
 - Auth: Usuario autenticado
@@ -585,11 +711,20 @@ Autenticacion:
 #### Reglas ADMIN
 - puede suspender y reactivar memberships con role `DEVELOPER` o `MEMBER`
 - no puede suspender ni reactivar el membership `OWNER` -> 403
-- no puede suspender ni reactivar otro membership `ADMIN` -> 403 (por la misma regla tampoco puede suspenderse a si mismo, que tambien es ADMIN)
+- no puede suspender ni reactivar otro membership `ADMIN` -> 403
+- no puede suspender ni reactivar su propio membership -> 403 por la regla explicita de auto-modificacion (ver abajo)
+
+#### Auto-modificacion prohibida
+- Regla explicita: **ningun usuario puede suspender ni reactivar su propia Membership**, sin importar su role -> 403.
+- Se evalua comparando el `user` del membership objetivo con el usuario autenticado (`targetMembership.user.id === requesterUser.id`), no se deduce de las reglas jerarquicas.
+- Se aplica a `suspend` y a `reactivate`.
+- Se evalua **antes** que la proteccion del OWNER, que el alcance OWNER/ADMIN y que la transicion de estado: un intento de auto-modificacion siempre responde 403, nunca 409.
+  - Ejemplo: un ADMIN `ACTIVE` que intenta reactivar su propio membership recibe 403 (auto-modificacion), no 409 (ya esta `ACTIVE`).
+- Un usuario `SUSPENDED` tampoco puede reactivarse a si mismo por otra via: su Membership no es `ACTIVE`, por lo que el requester ya es rechazado con 403.
 
 #### OWNER protegido
 - El membership cuyo role actual es `OWNER` no puede suspenderse ni reactivarse desde estos endpoints, sin importar quien sea el requester.
-- Como consecuencia de las reglas de alcance, ningun requester puede auto-suspenderse: el OWNER esta protegido y un ADMIN no alcanza a otros ADMIN (ni a si mismo).
+- La regla de auto-modificacion y la de OWNER protegido son independientes: el OWNER no puede auto-suspenderse por las dos razones, y un ADMIN tampoco alcanza a otros ADMIN.
 
 #### Estado del requester
 - El requester debe tener Membership `ACTIVE` en esa organization. Un OWNER o ADMIN `SUSPENDED` no puede administrar miembros -> 403.
@@ -599,9 +734,10 @@ Autenticacion:
 2. El requester debe tener Membership `ACTIVE` en `organizationId` -> si no, 403.
 3. El requester debe ser `OWNER` o `ADMIN` -> si no, 403.
 4. El membership objetivo debe existir **dentro de `organizationId`** -> si no, 404.
-5. El membership objetivo no puede tener role `OWNER` -> si lo tiene, 403.
-6. Reglas OWNER vs ADMIN sobre el role actual del objetivo -> si no aplican, 403.
-7. La transicion de estado debe ser valida -> si no, 409.
+5. El membership objetivo no puede ser el del propio requester -> si lo es, 403.
+6. El membership objetivo no puede tener role `OWNER` -> si lo tiene, 403.
+7. Reglas OWNER vs ADMIN sobre el role actual del objetivo -> si no aplican, 403.
+8. La transicion de estado debe ser valida -> si no, 409.
 
 - Los permisos se evaluan **antes** que el estado: un requester sin alcance sobre el membership objetivo recibe 403 y no descubre si ese membership esta `ACTIVE` o `SUSPENDED`.
 
@@ -615,11 +751,13 @@ Autenticacion:
 - El acceso tenant se corta igual, porque todo recurso scoped por organization exige Membership `ACTIVE`. Un usuario `SUSPENDED` en esa organization recibe 403 en, por ejemplo:
   - `GET /organizations/:organizationId`
   - `GET /organizations/:organizationId/members`
+  - `GET /organizations/:organizationId/members/manage`
   - `GET /organizations/:organizationId/invitations`
   - toda ruta `/organizations/:organizationId/workspace/...` (modules, components, tags, discussions, mensajes, asignaciones y contexto)
 - El usuario global no se modifica: sigue accediendo con normalidad a otras organizations donde tenga Membership `ACTIVE`.
 - `GET /me/context` deja de listar esa organization mientras el Membership este `SUSPENDED`, porque el contexto ya se construye solo con memberships `ACTIVE` (no requirio cambios). Las invitaciones pendientes del usuario no se ven afectadas.
-- El membership suspendido tampoco aparece en `GET /organizations/:organizationId/members`, que lista solo `ACTIVE`.
+- El membership suspendido **desaparece del directorio** `GET /organizations/:organizationId/members` para todos los roles, incluido el `OWNER`, porque el directorio solo lista memberships `ACTIVE`.
+- El mismo membership **sigue apareciendo** en el listado administrativo `GET /organizations/:organizationId/members/manage`, con `status: "SUSPENDED"` y su `membershipId` intacto, de modo que `OWNER`/`ADMIN` puedan reactivarlo despues de recargar. Al reactivarlo vuelve a aparecer en el directorio.
 - Los datos creados por el usuario (discussions, mensajes, asignaciones) no se modifican ni se eliminan.
 
 #### Proteccion tenant / anti-IDOR
@@ -634,7 +772,7 @@ Autenticacion:
 - Si otro request cambio el status en el medio, responde 409 y no pisa el cambio.
 
 - Codigo de exito: `201` (comportamiento por defecto de Nest para POST en este proyecto, igual que `POST .../invitations/:invitationId/cancel`).
-- Respuesta: mismo contrato seguro que `GET /organizations/:organizationId/members` y que el cambio de role. No devuelve la entidad `user` completa.
+- Respuesta: mismo contrato seguro que `PATCH .../members/:membershipId/role`. No devuelve la entidad `user` completa.
 ```json
 {
   "id": "7f1a2b3c-4d5e-4f60-8a1b-2c3d4e5f6071",
@@ -651,7 +789,7 @@ Autenticacion:
 - Errores:
   - 400 `organizationId` o `membershipId` no son UUID
   - 401 sin token valido
-  - 403 requester sin Membership en la organization, Membership del requester no `ACTIVE`, role insuficiente, membership objetivo `OWNER`, o regla OWNER/ADMIN no cumplida
+  - 403 requester sin Membership en la organization, Membership del requester no `ACTIVE`, role insuficiente, membership objetivo es el del propio requester, membership objetivo `OWNER`, o regla OWNER/ADMIN no cumplida
   - 404 membership inexistente o perteneciente a otra organization
   - 409 transicion invalida (`ACTIVE -> ACTIVE`, `SUSPENDED -> SUSPENDED`) o cambio concurrente de status
 - Fuera de alcance de estos endpoints: eliminar Membership, salir de la organization, transferencia de OWNER, cambio de role, historial/auditoria y notificaciones.

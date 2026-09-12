@@ -6,7 +6,7 @@ import {
 	NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { OrganizationMemberResponse } from '../dto/organization-member.response';
 import { Membership } from '../entities/membership.entity';
 import { MembershipStatus } from '../enums/membership-status.enum';
@@ -27,6 +27,22 @@ const ROLE_SCOPE_BY_REQUESTER_ROLE: Partial<Record<OrganizationRole, Organizatio
 	],
 	[OrganizationRole.ADMIN]: [OrganizationRole.DEVELOPER, OrganizationRole.MEMBER],
 };
+
+/**
+ * Statuses que devuelve el directorio general de miembros.
+ * Responde "quien forma parte actualmente de la organization", asi que solo incluye `ACTIVE`.
+ */
+const DIRECTORY_MEMBER_STATUSES: MembershipStatus[] = [MembershipStatus.ACTIVE];
+
+/**
+ * Statuses que devuelve el listado administrativo de memberships.
+ * Agrega `SUSPENDED` porque OWNER/ADMIN necesitan seguir viendo al miembro que suspendieron
+ * para poder reactivarlo o cambiarle el role despues.
+ */
+const MANAGEMENT_MEMBER_STATUSES: MembershipStatus[] = [
+	MembershipStatus.ACTIVE,
+	MembershipStatus.SUSPENDED,
+];
 
 /**
  * Transiciones validas de status de Membership y sus mensajes de conflicto.
@@ -110,6 +126,17 @@ export class MembershipsService {
 	}
 
 	/**
+	 * Permiso para el listado administrativo de memberships: OWNER o ADMIN ACTIVE.
+	 * DEVELOPER y MEMBER solo tienen el directorio general, que no necesita este permiso.
+	 */
+	assertCanManageMembers(membership: Membership): void {
+		this.assertActiveOwnerOrAdmin(
+			membership,
+			'Only OWNER or ADMIN can manage organization members',
+		);
+	}
+
+	/**
 	 * Permiso de entrada para administrar roles de miembros: OWNER o ADMIN ACTIVE.
 	 * Las diferencias entre OWNER y ADMIN se resuelven despues, segun el membership
 	 * objetivo y el rol solicitado.
@@ -141,15 +168,50 @@ export class MembershipsService {
 		});
 	}
 
-	async listActiveOrganizationMembers(organizationId: string): Promise<Membership[]> {
-		return this.membershipRepository.find({
+	/**
+	 * Query base de los dos listados de miembros. Siempre scoped por `organizationId` y
+	 * filtrada por `status`, nunca por role: ningun role queda oculto en ninguno de los dos.
+	 * El requester llega validado como Membership ACTIVE de esa misma organization.
+	 */
+	private async listOrganizationMembershipsByStatus(
+		organizationId: string,
+		statuses: MembershipStatus[],
+	): Promise<OrganizationMemberResponse[]> {
+		const memberships = await this.membershipRepository.find({
 			where: {
 				organization: { id: organizationId },
-				status: MembershipStatus.ACTIVE,
+				status: In(statuses),
 			},
 			relations: ['user'],
 			order: { createdAt: 'ASC' },
 		});
+
+		return memberships.map((membership) => this.toOrganizationMemberResponse(membership));
+	}
+
+	/**
+	 * Directorio general: quienes forman parte actualmente de la organization.
+	 * Devuelve solo memberships `ACTIVE`, de cualquier role, y es identico para todos los
+	 * requesters ACTIVE (OWNER, ADMIN, DEVELOPER o MEMBER). No es un listado administrativo.
+	 */
+	async listOrganizationDirectoryMembers(
+		organizationId: string,
+	): Promise<OrganizationMemberResponse[]> {
+		return this.listOrganizationMembershipsByStatus(organizationId, DIRECTORY_MEMBER_STATUSES);
+	}
+
+	/**
+	 * Listado administrativo: memberships `ACTIVE` + `SUSPENDED`, de cualquier role.
+	 * Reservado a OWNER/ADMIN ACTIVE (`assertCanManageMembers`).
+	 * Ver un membership aca no implica poder administrarlo: un ADMIN ve al OWNER y a otros
+	 * ADMIN, pero no puede cambiarles el role ni el status.
+	 * Devolver un Membership SUSPENDED tampoco le otorga acceso tenant a ese usuario: ese
+	 * acceso sigue exigiendo Membership ACTIVE en cada recurso scoped por organization.
+	 */
+	async listOrganizationMembersForManagement(
+		organizationId: string,
+	): Promise<OrganizationMemberResponse[]> {
+		return this.listOrganizationMembershipsByStatus(organizationId, MANAGEMENT_MEMBER_STATUSES);
 	}
 
 	async ensureUserNotInOrganization(userId: string, organizationId: string): Promise<void> {
@@ -190,6 +252,24 @@ export class MembershipsService {
 		if (!allowedRoles.includes(targetMembership.role)) {
 			throw new ForbiddenException(
 				`${requesterMembership.role} cannot modify a membership with role ${targetMembership.role}`,
+			);
+		}
+	}
+
+	/**
+	 * Regla explicita e independiente de la jerarquia: ningun usuario puede suspender ni
+	 * reactivar su propia Membership, sin importar su role. No se delega en que las reglas
+	 * OWNER/ADMIN lo impidan de forma indirecta.
+	 * Se compara por `user.id`, que es lo que identifica al requester; por el unique
+	 * (user, organization) eso equivale a comparar el `membershipId`.
+	 */
+	private assertNotOwnMembership(
+		requesterMembership: Membership,
+		targetMembership: Membership,
+	): void {
+		if (targetMembership.user.id === requesterMembership.user.id) {
+			throw new ForbiddenException(
+				'A user cannot suspend or reactivate their own membership',
 			);
 		}
 	}
@@ -309,6 +389,10 @@ export class MembershipsService {
 		const transition = MEMBERSHIP_STATUS_TRANSITIONS[newStatus];
 
 		const targetMembership = await this.findTenantMembershipOrFail(organizationId, membershipId);
+
+		/// Auto-modificacion prohibida explicitamente, antes de cualquier regla jerarquica o de
+		/// estado: nadie suspende ni reactiva su propia Membership (403, no 409).
+		this.assertNotOwnMembership(requesterMembership, targetMembership);
 
 		/// OWNER protegido: no se suspende ni se reactiva desde aca, ni siquiera por el propio OWNER.
 		if (targetMembership.role === OrganizationRole.OWNER) {

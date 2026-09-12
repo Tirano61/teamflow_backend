@@ -104,9 +104,40 @@ export class OrganizationsService {
 		};
 	}
 
-	async getOrganizationMembers(organizationId: string, user: User): Promise<Membership[]> {
+	/**
+	 * Directorio general de miembros: quienes forman parte actualmente de la organization.
+	 * Puede consultarlo cualquier Membership ACTIVE (OWNER, ADMIN, DEVELOPER o MEMBER) y todos
+	 * reciben exactamente lo mismo: memberships ACTIVE de cualquier role.
+	 * No es una pantalla administrativa: los memberships SUSPENDED no aparecen aca, viven en
+	 * `getOrganizationMembersForManagement`.
+	 */
+	async getOrganizationMembers(
+		organizationId: string,
+		user: User,
+	): Promise<OrganizationMemberResponse[]> {
 		await this.membershipsService.requireActiveMembership(user.id, organizationId);
-		return this.membershipsService.listActiveOrganizationMembers(organizationId);
+
+		return this.membershipsService.listOrganizationDirectoryMembers(organizationId);
+	}
+
+	/**
+	 * Listado administrativo de memberships: solo OWNER/ADMIN ACTIVE.
+	 * Devuelve memberships ACTIVE y SUSPENDED, sin filtrar por role, porque es el listado desde
+	 * el que se administra: cambiar roles, suspender y reactivar.
+	 * Orden de validacion identico al de las acciones administrativas: Membership ACTIVE del
+	 * requester -> permiso OWNER/ADMIN -> query scoped por organizationId.
+	 */
+	async getOrganizationMembersForManagement(
+		organizationId: string,
+		user: User,
+	): Promise<OrganizationMemberResponse[]> {
+		const requesterMembership = await this.membershipsService.requireActiveMembership(
+			user.id,
+			organizationId,
+		);
+		this.membershipsService.assertCanManageMembers(requesterMembership);
+
+		return this.membershipsService.listOrganizationMembersForManagement(organizationId);
 	}
 
 	/**
