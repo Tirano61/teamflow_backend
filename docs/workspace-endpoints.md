@@ -5,7 +5,15 @@ Base URL:
 
 Autenticacion:
 - Usuario autenticado: requiere JWT Bearer valido.
-- Developer: requiere JWT Bearer con rol developer.
+- Membership ACTIVE: ademas del JWT, requiere Membership `ACTIVE` del usuario autenticado en el `:organizationId` de la ruta.
+- Membership ACTIVE + OWNER/ADMIN: ademas de lo anterior, el role de esa Membership debe ser `OWNER` o `ADMIN`.
+- Developer: etiqueta heredada que solo se usa en las secciones de Discussions. Significa Membership `ACTIVE` con role `OWNER`, `ADMIN` o `DEVELOPER`.
+
+Autorizacion tenant:
+- Los permisos sobre recursos de una organization se resuelven con la Membership del usuario en el `:organizationId` de la ruta.
+- Ningun endpoint de Workspace depende del rol global `developer` del `User` (`roles`, usado solo por los endpoints de administracion de `/auth`).
+- El backend no persiste una organization activa: la organization siempre llega por la ruta.
+- Una Membership `SUSPENDED` no tiene acceso tenant aunque conserve role `OWNER` o `ADMIN`.
 
 ## Auth
 
@@ -107,26 +115,56 @@ Autenticacion:
 }
 ```
 
+## Workspace: catalogos tenant (Modules, Components, Tags)
+
+Los tres catalogos viven bajo la misma base tenant:
+
+`/organizations/:organizationId/workspace`
+
+Regla de autorizacion comun a Modules, Components, Tags y a la relacion WorkModule <-> Component:
+
+| Tipo de operacion | Autorizacion |
+| ----------------- | ------------ |
+| Lectura | Membership `ACTIVE` en `:organizationId`, con cualquier role (`OWNER`, `ADMIN`, `DEVELOPER`, `MEMBER`) |
+| Administracion / escritura | Membership `ACTIVE` en `:organizationId` con role `OWNER` o `ADMIN` |
+
+- La autorizacion se resuelve siempre contra el `:organizationId` de la ruta. **No depende del rol global `developer` del `User`**: un usuario sin rol global puede administrar los catalogos de una organization donde es `OWNER` o `ADMIN`, y un usuario con rol global `developer` no obtiene por eso ningun permiso tenant.
+- `DEVELOPER` y `MEMBER` pueden leer, pero reciben 403 en cualquier operacion de administracion.
+- Una Membership `SUSPENDED` recibe 403 en todos los endpoints de estas secciones, aunque su role sea `OWNER` o `ADMIN`.
+- Todas las consultas se filtran por `organizationId`: dentro de una organization donde el usuario si tiene Membership, un id que pertenece a otra organization responde 404 (`... not found`) y nunca 200, para no revelar su existencia. Si el usuario no tiene Membership `ACTIVE` en la organization de la ruta, la respuesta es 403 y no se llega a buscar el recurso.
+
+Orden de evaluacion de errores:
+
+1. 401 si falta el JWT o no es valido.
+2. 400 si `:organizationId` o los ids de la ruta no son UUID, o si el body no pasa la validacion global (`whitelist` + `forbidNonWhitelisted`).
+3. 403 si el usuario no tiene Membership en esa organization (`User does not belong to this organization`) o su Membership no esta `ACTIVE` (`Membership is not active`).
+4. 403 si la operacion es administrativa y el role no es `OWNER` ni `ADMIN` (`You do not have permission for this action in this organization`).
+5. 404 si el recurso no existe dentro de esa organization.
+6. 400 en conflictos de dominio (nombre duplicado, relacion ya existente).
+
 ## Modules
 
-### GET /workspace/modules
-- Auth: Usuario autenticado
-- Descripcion: Lista solo modules activas.
+### GET /organizations/:organizationId/workspace/modules
+- Auth: Membership ACTIVE
+- Descripcion: Lista solo modules activas de la organization, con sus components asociados.
 
-### GET /workspace/modules/all
-- Auth: Developer
-- Descripcion: Lista modules activas e inactivas.
+### GET /organizations/:organizationId/workspace/modules/all
+- Auth: Membership ACTIVE
+- Descripcion: Lista modules activas e inactivas de la organization.
 
-### GET /workspace/modules/:id
-- Auth: Usuario autenticado
-- Descripcion: Obtiene una module activa por id.
+### GET /organizations/:organizationId/workspace/modules/:id
+- Auth: Membership ACTIVE
+- Descripcion: Obtiene una module activa por id dentro de la organization.
+- Errores: 404 si no existe, si esta inactiva o si pertenece a otra organization.
 
-### GET /workspace/modules/all/:id
-- Auth: Developer
+### GET /organizations/:organizationId/workspace/modules/all/:id
+- Auth: Membership ACTIVE
 - Descripcion: Obtiene una module por id incluyendo inactivas.
+- Errores: 404 si no existe o si pertenece a otra organization.
 
-### POST /workspace/modules
-- Auth: Developer
+### POST /organizations/:organizationId/workspace/modules
+- Auth: Membership ACTIVE + OWNER/ADMIN
+- Descripcion: Crea una module en la organization de la ruta. La organization se toma del path, nunca del body.
 - Body:
 ```json
 {
@@ -134,9 +172,13 @@ Autenticacion:
   "description": "Modulo de asistencia remota"
 }
 ```
+- Errores:
+  - 400 `name` vacio, mayor a 150 caracteres o ya usado en esa organization (comparacion case-insensitive)
+  - 403 sin Membership `ACTIVE`, o con role `DEVELOPER` / `MEMBER`
 
-### PATCH /workspace/modules/:id
-- Auth: Developer
+### PATCH /organizations/:organizationId/workspace/modules/:id
+- Auth: Membership ACTIVE + OWNER/ADMIN
+- Descripcion: Actualiza `name` y/o `description` de una module de esa organization.
 - Body:
 ```json
 {
@@ -144,46 +186,59 @@ Autenticacion:
   "description": "Descripcion actualizada"
 }
 ```
+- Errores:
+  - 400 `name` duplicado dentro de la misma organization
+  - 403 role insuficiente
+  - 404 module inexistente en esa organization
 
-### PATCH /workspace/modules/:id/active
-- Auth: Developer
+### PATCH /organizations/:organizationId/workspace/modules/:id/active
+- Auth: Membership ACTIVE + OWNER/ADMIN
+- Descripcion: Activa o desactiva la module. No existe DELETE fisico de module.
 - Body:
 ```json
 {
   "active": false
 }
 ```
+- Errores: 403 role insuficiente; 404 module inexistente en esa organization.
 
 ## Components
 
-### GET /workspace/components
-- Auth: Usuario autenticado
-- Descripcion: Lista solo components activos.
+### GET /organizations/:organizationId/workspace/components
+- Auth: Membership ACTIVE
+- Descripcion: Lista solo components activos de la organization, con sus modules asociadas.
 
-### GET /workspace/components/all
-- Auth: Developer
-- Descripcion: Lista components activos e inactivos.
+### GET /organizations/:organizationId/workspace/components/all
+- Auth: Membership ACTIVE
+- Descripcion: Lista components activos e inactivos de la organization.
 
-### GET /workspace/components/:id
-- Auth: Usuario autenticado
-- Descripcion: Obtiene un component activo por id.
+### GET /organizations/:organizationId/workspace/components/:id
+- Auth: Membership ACTIVE
+- Descripcion: Obtiene un component activo por id dentro de la organization.
+- Errores: 404 si no existe, si esta inactivo o si pertenece a otra organization.
 
-### GET /workspace/components/all/:id
-- Auth: Developer
+### GET /organizations/:organizationId/workspace/components/all/:id
+- Auth: Membership ACTIVE
 - Descripcion: Obtiene un component por id incluyendo inactivos.
+- Errores: 404 si no existe o si pertenece a otra organization.
 
-### POST /workspace/components
-- Auth: Developer
+### POST /organizations/:organizationId/workspace/components
+- Auth: Membership ACTIVE + OWNER/ADMIN
+- Descripcion: Crea un component en la organization de la ruta.
 - Body:
 ```json
 {
   "name": "ST-456",
-  "description": "Indicador de prueba"
+  "description": "Descripcion del component"
 }
 ```
+- Errores:
+  - 400 `name` vacio, mayor a 150 caracteres o ya usado en esa organization (case-insensitive)
+  - 403 sin Membership `ACTIVE`, o con role `DEVELOPER` / `MEMBER`
 
-### PATCH /workspace/components/:id
-- Auth: Developer
+### PATCH /organizations/:organizationId/workspace/components/:id
+- Auth: Membership ACTIVE + OWNER/ADMIN
+- Descripcion: Actualiza `name` y/o `description` de un component de esa organization.
 - Body:
 ```json
 {
@@ -191,33 +246,51 @@ Autenticacion:
   "description": "Descripcion actualizada"
 }
 ```
+- Errores:
+  - 400 `name` duplicado dentro de la misma organization
+  - 403 role insuficiente
+  - 404 component inexistente en esa organization
 
-### PATCH /workspace/components/:id/active
-- Auth: Developer
+### PATCH /organizations/:organizationId/workspace/components/:id/active
+- Auth: Membership ACTIVE + OWNER/ADMIN
+- Descripcion: Activa o desactiva el component. No existe DELETE fisico de component.
 - Body:
 ```json
 {
   "active": false
 }
 ```
+- Errores: 403 role insuficiente; 404 component inexistente en esa organization.
 
 ## Relations Module <-> Component
 
-### POST /workspace/modules/:moduleId/components/:componentId
-- Auth: Developer
+La relacion es administrable solo desde el lado WorkModule.
+
+### POST /organizations/:organizationId/workspace/modules/:moduleId/components/:componentId
+- Auth: Membership ACTIVE + OWNER/ADMIN
 - Descripcion: Asocia un component a una module.
+- Validacion cross-tenant: la module y el component se buscan por separado filtrando por `organizationId` de la ruta. Si alguno pertenece a otra organization, responde 404 (`Module not found` / `Component not found`). No es posible asociar una module de la organization A con un component de la organization B.
+- Errores:
+  - 400 la relacion ya existe (`Module and component relation already exists`)
+  - 403 role insuficiente
+  - 404 module o component inexistente en esa organization
 
-### DELETE /workspace/modules/:moduleId/components/:componentId
-- Auth: Developer
-- Descripcion: Elimina asociacion entre module e component.
+### DELETE /organizations/:organizationId/workspace/modules/:moduleId/components/:componentId
+- Auth: Membership ACTIVE + OWNER/ADMIN
+- Descripcion: Elimina la asociacion entre module y component. No elimina ninguno de los dos recursos.
+- Errores:
+  - 403 role insuficiente
+  - 404 module inexistente en esa organization, o relacion inexistente (`Module and component relation not found`)
 
-### GET /workspace/modules/:moduleId/components
-- Auth: Usuario autenticado
-- Descripcion: Lista components activos asociados a una module.
+### GET /organizations/:organizationId/workspace/modules/:moduleId/components
+- Auth: Membership ACTIVE
+- Descripcion: Lista components activos asociados a una module de esa organization.
+- Errores: 404 module inexistente en esa organization.
 
-### GET /workspace/components/:componentId/modules
-- Auth: Usuario autenticado
-- Descripcion: Lista modules activas asociadas a un component.
+### GET /organizations/:organizationId/workspace/components/:componentId/modules
+- Auth: Membership ACTIVE
+- Descripcion: Lista modules activas asociadas a un component de esa organization.
+- Errores: 404 component inexistente en esa organization.
 
 ## Discussions
 
@@ -655,7 +728,7 @@ Son dos conceptos distintos y tienen endpoints distintos.
 
 #### Role repetido (idempotencia)
 - Si el miembro ya tiene el role solicitado, la respuesta es `200` con el objeto sin cambios y **no** se escribe en base.
-- Se eligio idempotencia y no 409 porque es un PATCH de atributo, igual que `PATCH /workspace/modules/:id/active` y equivalentes. El 409 del proyecto se reserva para transiciones de estado invalidas (por ejemplo cancelar una invitacion que no esta `PENDING`) y aqui se usa solo para el membership objetivo no `ACTIVE`.
+- Se eligio idempotencia y no 409 porque es un PATCH de atributo, igual que `PATCH /organizations/:organizationId/workspace/modules/:id/active` y equivalentes. El 409 del proyecto se reserva para transiciones de estado invalidas (por ejemplo cancelar una invitacion que no esta `PENDING`) y aqui se usa solo para el membership objetivo no `ACTIVE`.
 
 #### Proteccion tenant / anti-IDOR
 - El membership objetivo **nunca** se busca solo por `membershipId`: la consulta siempre incluye `organization_id = :organizationId`.
@@ -1107,48 +1180,65 @@ Notas operativas:
 
 ## Tags
 
-### GET /workspace/tags
-- Auth: Usuario autenticado
-- Descripcion: Lista tags activas.
+Rutas tenant: `/organizations/:organizationId/workspace/tags`. Aplica la misma regla de autorizacion que Modules y Components (ver "Workspace: catalogos tenant"): lectura para cualquier Membership `ACTIVE`, administracion solo para `OWNER` o `ADMIN` `ACTIVE`.
 
-### GET /workspace/tags/all
-- Auth: Developer
-- Descripcion: Lista tags activas e inactivas.
+Unicidad: `(organizationId, normalizedName)`. `normalizedName` es el `name` recortado y pasado a minusculas, por lo que dos tags de la misma organization no pueden diferenciarse solo por mayusculas. Dos organizations distintas si pueden tener el mismo tag.
 
-### POST /workspace/tags
-- Auth: Developer
+### GET /organizations/:organizationId/workspace/tags
+- Auth: Membership ACTIVE
+- Descripcion: Lista tags activas de la organization.
+
+### GET /organizations/:organizationId/workspace/tags/all
+- Auth: Membership ACTIVE
+- Descripcion: Lista tags activas e inactivas de la organization.
+
+### POST /organizations/:organizationId/workspace/tags
+- Auth: Membership ACTIVE + OWNER/ADMIN
+- Descripcion: Crea una tag en la organization de la ruta.
 - Body:
 ```json
 {
   "name": "Urgente"
 }
 ```
+- Errores:
+  - 400 `name` vacio, mayor a 100 caracteres, o ya existente en esa organization segun `normalizedName`
+  - 403 sin Membership `ACTIVE`, o con role `DEVELOPER` / `MEMBER`
 
-### PATCH /workspace/tags/:id
-- Auth: Developer
+### PATCH /organizations/:organizationId/workspace/tags/:id
+- Auth: Membership ACTIVE + OWNER/ADMIN
+- Descripcion: Renombra la tag. Actualiza `name` y `normalizedName`.
 - Body:
 ```json
 {
   "name": "Urgencia alta"
 }
 ```
+- Errores:
+  - 400 `normalizedName` duplicado dentro de la misma organization
+  - 403 role insuficiente
+  - 404 tag inexistente en esa organization
 
-### PATCH /workspace/tags/:id/active
-- Auth: Developer
+### PATCH /organizations/:organizationId/workspace/tags/:id/active
+- Auth: Membership ACTIVE + OWNER/ADMIN
+- Descripcion: Activa o desactiva la tag. No existe DELETE fisico de tag.
 - Body:
 ```json
 {
   "active": false
 }
 ```
+- Errores: 403 role insuficiente; 404 tag inexistente en esa organization.
 
 ## Variables recomendadas para pruebas
-- moduleId: UUID valido de modules
-- componentId: UUID valido de components
+- organizationId: UUID de una organization donde el usuario autenticado tiene Membership ACTIVE
+- otherOrganizationId: UUID de otra organization, para probar aislamiento tenant
+- moduleId: UUID valido de modules de esa organization
+- componentId: UUID valido de components de esa organization
 - discussionId: UUID valido de discussions
-- tagId: UUID valido de tags
+- tagId: UUID valido de tags de esa organization
 - messageId: UUID valido de discussion_messages
-- developerUserId: UUID valido de users con rol developer
+- developerUserId: UUID de un user con Membership ACTIVE asignable en esa organization (role OWNER, ADMIN o DEVELOPER)
 - deviceToken: FCM registration token valido de Android
 
 ## Read State / Unread
