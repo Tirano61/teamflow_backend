@@ -7,7 +7,7 @@ Autenticacion:
 - Usuario autenticado: requiere JWT Bearer valido.
 - Membership ACTIVE: ademas del JWT, requiere Membership `ACTIVE` del usuario autenticado en el `:organizationId` de la ruta.
 - Membership ACTIVE + OWNER/ADMIN: ademas de lo anterior, el role de esa Membership debe ser `OWNER` o `ADMIN`.
-- Developer: etiqueta heredada que solo se usa en las secciones de Discussions. Significa Membership `ACTIVE` con role `OWNER`, `ADMIN` o `DEVELOPER`.
+- Membership ACTIVE + OWNER/ADMIN/DEVELOPER: role de gestion de Discussions (status, asignaciones y relaciones de contexto). Ver "Workspace: Discussions (reglas comunes)".
 
 Autorizacion tenant:
 - Los permisos sobre recursos de una organization se resuelven con la Membership del usuario en el `:organizationId` de la ruta.
@@ -292,56 +292,115 @@ La relacion es administrable solo desde el lado WorkModule.
 - Descripcion: Lista modules activas asociadas a un component de esa organization.
 - Errores: 404 component inexistente en esa organization.
 
+## Workspace: Discussions (reglas comunes)
+
+Todas las rutas de Discussions, relaciones de contexto, asignaciones y DiscussionMessages viven bajo la base tenant:
+
+`/organizations/:organizationId/workspace`
+
+No existen rutas `/workspace/discussions...` sin `organizationId`.
+
+Autorizacion (siempre contra la Membership del usuario en el `:organizationId` de la ruta; nunca contra el rol global `developer` del `User`):
+
+| Operacion | Autorizacion |
+| --------- | ------------ |
+| Listar / ver discussions, marcar como leida, listar developers asignables | Membership `ACTIVE`, cualquier role |
+| Crear discussion (incluye `moduleIds`/`componentIds`/`tagIds` iniciales) | Membership `ACTIVE`, cualquier role |
+| Editar `title` / `type` (`PATCH .../discussions/:id`) | Membership `ACTIVE` y ser el creador de la discussion, o role `OWNER`/`ADMIN`/`DEVELOPER` |
+| Reemplazar contexto en `PATCH .../discussions/:id` (`moduleIds`/`componentIds`/`tagIds`) | Membership `ACTIVE` con role `OWNER`/`ADMIN`/`DEVELOPER` (tambien para el creador) |
+| Cambiar status | Membership `ACTIVE` con role `OWNER`/`ADMIN`/`DEVELOPER` |
+| Asignaciones (agregar, reemplazar, quitar) | Membership `ACTIVE` con role `OWNER`/`ADMIN`/`DEVELOPER` |
+| Relaciones Discussion <-> WorkModule / Component / Tag | Membership `ACTIVE` con role `OWNER`/`ADMIN`/`DEVELOPER` |
+| Crear / listar DiscussionMessages (texto o archivo) | Membership `ACTIVE`, cualquier role |
+| Editar / eliminar un DiscussionMessage | Membership `ACTIVE` y ser el autor del mensaje (ningun role, ni `OWNER`, puede editar/eliminar mensajes ajenos) |
+
+- En este documento, "role de gestion de Discussions" significa `OWNER`, `ADMIN` o `DEVELOPER`. `MEMBER` puede participar (leer, crear discussions, escribir mensajes, editar `title`/`type` de sus propias discussions), pero recibe 403 `You do not have permission for this action in this organization` en status, asignaciones y relaciones.
+- Membership `SUSPENDED`: todas las operaciones pasan por `requireActiveMembership`, por lo que responden 403 `Membership is not active`, aunque el role sea `OWNER` o `ADMIN` y aunque el usuario sea el creador de la discussion o el autor del mensaje.
+- Sin Membership en la organization de la ruta: 403 `User does not belong to this organization`, sin llegar a buscar el recurso.
+
+Aislamiento tenant / anti-IDOR:
+- La discussion se busca siempre por `id` + `organizationId` de la ruta. Una discussion de otra organization responde 404 `Discussion not found`, igual que una inexistente.
+- WorkModules, Components y Tags enviados en body (`moduleIds`, `componentIds`, `tagIds`, `moduleId`, `componentId`, `tagId`) se buscan por `id` + `organizationId`. Un id de otra organization responde 404 (`Module not found...`, `Component not found...`, `Tag not found...`), igual que uno inexistente. No se valida `isActive` de esos catalogos: una WorkModule/Component/Tag inactiva de la misma organization puede asociarse.
+- Los DiscussionMessages se resuelven por `messageId` + `discussionId`, y la discussion se valida antes contra `organizationId`. Un mensaje de otra discussion u otra organization responde 404.
+- Los developers asignables se resuelven por Membership en la organization de la ruta. Un usuario de otra organization responde 400 `Users not assignable as developers: ...`, igual que un usuario inexistente.
+- Los filtros de listado (`moduleIds`, `componentIds`, `tagIds`, `createdBy`, `assignedDeveloperId`) siempre se aplican sobre discussions de la organization de la ruta; ids de otra organization simplemente no producen resultados.
+
+Orden de evaluacion de errores:
+1. 401 si falta el JWT, no es valido o el `User` esta inactivo.
+2. 400 si `:organizationId` o los ids de la ruta no son UUID, si los query params no pasan sus pipes, o si el body no pasa la validacion global (`whitelist` + `forbidNonWhitelisted`).
+3. 403 sin Membership o con Membership no `ACTIVE`.
+4. 403 por role, en las operaciones que requieren role de gestion (status, asignaciones, relaciones). En `PATCH .../discussions/:id` y en editar/eliminar mensajes, el control de creador/autor se hace despues de encontrar el recurso (ver cada endpoint).
+5. 404 si la discussion (o el mensaje, o el catalogo referenciado) no existe dentro de esa organization.
+6. 400 en conflictos de dominio (relacion ya existente, contenido vacio, tipo de mensaje invalido). Este modulo no usa 409.
+
 ## Discussions
 
-### POST /workspace/discussions
-- Auth: Usuario autenticado
-- Descripcion: Crea una discussion con estado inicial NEW y createdBy tomado del token. Requiere initialMessageContent y crea el primer DiscussionMessage de tipo TEXT en la misma transaccion.
+### POST /organizations/:organizationId/workspace/discussions
+- Auth: Membership ACTIVE (cualquier role)
+- Descripcion: Crea una discussion con estado inicial NEW y createdBy tomado del token. Requiere initialMessageContent y crea el primer DiscussionMessage de tipo TEXT en la misma transaccion. El creador queda marcado como leido.
 - Body:
 ```json
 {
   "type": "ERROR",
-  "title": "Problema en la app remota",
+  "title": "Problema en el proceso de alta",
   "initialMessageContent": "Descripcion inicial del problema",
   "moduleIds": ["{{moduleId}}"],
   "componentIds": ["{{componentId}}"],
   "tagIds": ["{{tagId}}"]
 }
 ```
+- `type`: `ERROR | IDEA | IMPROVEMENT | QUESTION`. `title`: 1-150 caracteres (no vacio tras trim). `initialMessageContent`: 1-4000 caracteres (no vacio tras trim). `moduleIds`/`componentIds`/`tagIds`: opcionales, arrays de UUID v4 sin duplicados.
+- Respuesta 201: la discussion con `createdBy`, `workModules`, `components`, `tags`, `assignedDevelopers` (`id`, `fullName`, `email`) e `isUnread`.
+- Errores:
+  - 400 body invalido, `title`/`initialMessageContent` vacios
+  - 403 sin Membership `ACTIVE`
+  - 404 `Module not found: ...`, `Component not found: ...` o `Tag not found: ...` si algun id no existe en esa organization (incluye ids de otra organization)
 
-### GET /workspace/discussions
-- Auth: Usuario autenticado
-- Descripcion: Lista discussions paginadas con filtros. Cada item incluye `isUnread` calculado para el usuario autenticado.
+### GET /organizations/:organizationId/workspace/discussions
+- Auth: Membership ACTIVE (cualquier role)
+- Descripcion: Lista discussions de la organization, paginadas con filtros, ordenadas por `createdAt` DESC. Cada item incluye `isUnread` calculado para el usuario autenticado.
 - Query params opcionales:
-  - page (default 1)
-  - limit (default 20)
+  - page (default 1, minimo 1)
+  - limit (default 20, minimo 1, maximo efectivo 100)
   - type (ERROR | IDEA | IMPROVEMENT | QUESTION)
   - status (NEW | REVIEW | IN_PROGRESS | RESOLVED)
   - moduleIds (CSV de UUIDs)
   - componentIds (CSV de UUIDs)
   - tagIds (CSV de UUIDs)
-  - createdBy (UUID de usuario)
+  - createdBy (UUID de usuario; se ignora si `mine=true`)
   - mine (true|false)
   - assignedToMe (true|false)
-  - assignedDeveloperId (UUID de developer asignado)
+  - assignedDeveloperId (UUID de developer asignado; se ignora si `assignedToMe=true`)
   - unread (true|false)
+- Respuesta 200: `{ "data": [...], "page", "limit", "total", "totalPages" }`
+- Errores: 400 paginacion invalida, enum invalido, UUID invalido o ids duplicados en un CSV; 403 sin Membership `ACTIVE`.
 
-### GET /workspace/discussions/:id
-- Auth: Usuario autenticado
-- Descripcion: Obtiene una discussion por id con creador, modules, components y tags. Incluye `isUnread` para el usuario autenticado.
+### GET /organizations/:organizationId/workspace/discussions/:id
+- Auth: Membership ACTIVE (cualquier role)
+- Descripcion: Obtiene una discussion por id con creador, modules, components, tags y developers asignados. Incluye `isUnread` para el usuario autenticado.
+- Errores: 403 sin Membership `ACTIVE`; 404 `Discussion not found` (inexistente o de otra organization).
 
-### POST /workspace/discussions/:id/read
-- Auth: Usuario autenticado
+### POST /organizations/:organizationId/workspace/discussions/:id/read
+- Auth: Membership ACTIVE (cualquier role)
 - Descripcion: Marca la discussion como leida para el usuario autenticado (idempotente, usa UPSERT por `(discussion_id, user_id)`).
+- Respuesta 201:
+```json
+{
+  "discussionId": "UUID",
+  "lastReadAt": "ISO-8601",
+  "isUnread": false
+}
+```
+- Errores: 403 sin Membership `ACTIVE`; 404 `Discussion not found`.
 
-### PATCH /workspace/discussions/:id
-- Auth: Usuario autenticado
-- Descripcion: Actualiza discussion. `title` y `type` pueden modificarse por el creador o por un developer. `moduleIds` e `componentIds` solo pueden modificarse por un developer.
-- Reglas de contexto (modules/components):
+### PATCH /organizations/:organizationId/workspace/discussions/:id
+- Auth: Membership ACTIVE + (creador de la discussion o role OWNER/ADMIN/DEVELOPER). Cambiar contexto requiere role OWNER/ADMIN/DEVELOPER.
+- Descripcion: Actualiza la discussion. Todos los campos son opcionales. `title` y `type` pueden modificarse por el creador (cualquier role) o por `OWNER`/`ADMIN`/`DEVELOPER`. `moduleIds`, `componentIds` y `tagIds` solo por `OWNER`/`ADMIN`/`DEVELOPER`, aunque el usuario sea el creador.
+- Reglas de contexto (modules/components/tags):
   - Permite reemplazar completamente asociaciones enviando los arrays.
   - Enviar arrays vacios (`[]`) elimina todas las asociaciones de ese catalogo.
-  - Si un id no existe, responde error.
-  - Si hay ids duplicados, responde error.
+  - Si un id no existe en esa organization (o es de otra organization), responde 404.
+  - Si hay ids duplicados, responde 400.
 - Body:
 ```json
 {
@@ -352,9 +411,16 @@ La relacion es administrable solo desde el lado WorkModule.
   "tagIds": ["{{tagId}}"]
 }
 ```
+- Respuesta 200: la discussion actualizada con sus relaciones (sin `isUnread`).
+- Errores (en este orden):
+  - 403 sin Membership `ACTIVE`
+  - 404 `Discussion not found`
+  - 403 `You can only modify your own discussions` si el usuario es `MEMBER` y no es el creador
+  - 403 `You do not have permission for this action in this organization` si se envia `moduleIds`/`componentIds`/`tagIds` con role `MEMBER`
+  - 400 `title` vacio o body invalido; 404 module/component/tag no encontrado en esa organization
 
-### PATCH /workspace/discussions/:id/status
-- Auth: Developer
+### PATCH /organizations/:organizationId/workspace/discussions/:id/status
+- Auth: Membership ACTIVE + OWNER/ADMIN/DEVELOPER
 - Descripcion: Cambia el estado Kanban de la discussion. No impone flujo lineal de transicion.
 - Body:
 ```json
@@ -362,108 +428,146 @@ La relacion es administrable solo desde el lado WorkModule.
   "status": "IN_PROGRESS"
 }
 ```
+- Respuesta 200: la discussion actualizada con sus relaciones.
+- Errores: 400 status invalido; 403 sin Membership `ACTIVE` o role `MEMBER`; 404 `Discussion not found`.
 
-### GET /workspace/developers
-- Auth: Usuario autenticado
-- Descripcion: Lista usuarios activos asignables como developers (id, fullName, email).
+### GET /organizations/:organizationId/workspace/developers
+- Auth: Membership ACTIVE (cualquier role)
+- Descripcion: Lista usuarios asignables de la organization (`id`, `fullName`, `email`), ordenados por `fullName`: Membership `ACTIVE` con role `OWNER`, `ADMIN` o `DEVELOPER` y `User.isActive = true`.
+- Errores: 403 sin Membership `ACTIVE`.
 
-### POST /workspace/discussions/:id/assignments
-- Auth: Developer
-- Descripcion: Agrega developers asignados (sin duplicar).
+### POST /organizations/:organizationId/workspace/discussions/:id/assignments
+- Auth: Membership ACTIVE + OWNER/ADMIN/DEVELOPER
+- Descripcion: Agrega developers asignados (sin duplicar los ya asignados).
 - Body:
 ```json
 {
   "developerUserIds": ["{{developerUserId}}"]
 }
 ```
+- Respuesta 201: la discussion actualizada.
+- Errores:
+  - 400 body invalido o ids duplicados
+  - 403 sin Membership `ACTIVE` o role `MEMBER`
+  - 404 `Discussion not found`
+  - 400 `Users not assignable as developers: ...` si algun usuario no tiene Membership en esa organization (incluye usuarios de otra organization) o su Membership no esta `ACTIVE`
+  - 403 `User cannot receive assignments in this organization` si algun usuario tiene Membership `ACTIVE` con role `MEMBER`
 
-### PUT /workspace/discussions/:id/assignments
-- Auth: Developer
-- Descripcion: Reemplaza completamente la coleccion de developers asignados.
+### PUT /organizations/:organizationId/workspace/discussions/:id/assignments
+- Auth: Membership ACTIVE + OWNER/ADMIN/DEVELOPER
+- Descripcion: Reemplaza completamente la coleccion de developers asignados. `[]` quita todas las asignaciones.
 - Body:
 ```json
 {
   "developerUserIds": ["{{developerUserId}}"]
 }
 ```
+- Respuesta 200: la discussion actualizada.
+- Errores: iguales a `POST .../assignments`.
 
-### DELETE /workspace/discussions/:id/assignments/:developerUserId
-- Auth: Developer
+### DELETE /organizations/:organizationId/workspace/discussions/:id/assignments/:developerUserId
+- Auth: Membership ACTIVE + OWNER/ADMIN/DEVELOPER
 - Descripcion: Quita un developer asignado de la discussion.
+- Respuesta 200: la discussion actualizada.
+- Errores: 403 sin Membership `ACTIVE` o role `MEMBER`; 404 `Discussion not found`; 404 `Discussion assignment not found` si el usuario no estaba asignado.
 
-## Discussion relations (Developer)
+## Discussion relations (WorkModule, Component, Tag)
 
-### POST /workspace/discussions/:id/modules
-- Auth: Developer
+Todas requieren Membership ACTIVE + OWNER/ADMIN/DEVELOPER. `MEMBER` recibe 403. Responden con la discussion actualizada (incluye `isUnread`).
+
+### POST /organizations/:organizationId/workspace/discussions/:id/modules
+- Auth: Membership ACTIVE + OWNER/ADMIN/DEVELOPER
 - Body:
 ```json
 {
   "moduleId": "{{moduleId}}"
 }
 ```
+- Respuesta 201.
+- Errores: 400 `moduleId` no UUID; 403; 404 `Discussion not found`; 404 `Module not found` (inexistente o de otra organization); 400 `Discussion and module relation already exists`.
 
-### DELETE /workspace/discussions/:id/modules/:moduleId
-- Auth: Developer
+### DELETE /organizations/:organizationId/workspace/discussions/:id/modules/:moduleId
+- Auth: Membership ACTIVE + OWNER/ADMIN/DEVELOPER
+- Respuesta 200.
+- Errores: 403; 404 `Discussion not found`; 404 `Discussion and module relation not found` (incluye WorkModules de otra organization, que nunca pueden estar relacionadas).
 
-### POST /workspace/discussions/:id/components
-- Auth: Developer
+### POST /organizations/:organizationId/workspace/discussions/:id/components
+- Auth: Membership ACTIVE + OWNER/ADMIN/DEVELOPER
 - Body:
 ```json
 {
   "componentId": "{{componentId}}"
 }
 ```
+- Respuesta 201.
+- Errores: 400 `componentId` no UUID; 403; 404 `Discussion not found`; 404 `Component not found` (inexistente o de otra organization); 400 `Discussion and component relation already exists`.
 
-### DELETE /workspace/discussions/:id/components/:componentId
-- Auth: Developer
+### DELETE /organizations/:organizationId/workspace/discussions/:id/components/:componentId
+- Auth: Membership ACTIVE + OWNER/ADMIN/DEVELOPER
+- Respuesta 200.
+- Errores: 403; 404 `Discussion not found`; 404 `Discussion and component relation not found`.
 
 ### Nota sobre reemplazo masivo de contexto
-- Para reemplazar todas las modules/components de una discussion en una sola operacion, usar `PATCH /workspace/discussions/:id` con `moduleIds` y/o `componentIds`.
+- Para reemplazar todas las modules/components/tags de una discussion en una sola operacion, usar `PATCH /organizations/:organizationId/workspace/discussions/:id` con `moduleIds`, `componentIds` y/o `tagIds`.
 
-### POST /workspace/discussions/:id/tags
-- Auth: Developer
+### POST /organizations/:organizationId/workspace/discussions/:id/tags
+- Auth: Membership ACTIVE + OWNER/ADMIN/DEVELOPER
 - Body:
 ```json
 {
   "tagId": "{{tagId}}"
 }
 ```
+- Respuesta 201.
+- Errores: 400 `tagId` no UUID; 403; 404 `Discussion not found`; 404 `Tag not found` (inexistente o de otra organization); 400 `Discussion and tag relation already exists`.
 
-### DELETE /workspace/discussions/:id/tags/:tagId
-- Auth: Developer
+### DELETE /organizations/:organizationId/workspace/discussions/:id/tags/:tagId
+- Auth: Membership ACTIVE + OWNER/ADMIN/DEVELOPER
+- Respuesta 200.
+- Errores: 403; 404 `Discussion not found`; 404 `Discussion and tag relation not found`.
 
 ## Discussion Messages
 
-### POST /workspace/discussions/:discussionId/messages
-- Auth: Usuario autenticado
+Crear y listar mensajes requiere Membership ACTIVE con cualquier role. Editar y eliminar requiere ademas ser el autor. La discussion se valida primero contra la organization de la ruta: si no existe alli, responde 404 `Discussion not found`.
+
+### POST /organizations/:organizationId/workspace/discussions/:discussionId/messages
+- Auth: Membership ACTIVE (cualquier role)
 - Descripcion: Crea un mensaje TEXT dentro de la discussion usando author del token. El autor queda marcado como leido hasta ese momento.
 - Body:
 ```json
 {
   "type": "TEXT",
-  "content": "Necesitamos revisar este caso en produccion"
+  "content": "Necesitamos revisar este caso"
 }
 ```
+- `type` es opcional; si se envia debe ser `TEXT`. `content`: 1-4000 caracteres, no vacio tras trim.
+- Respuesta 201: el mensaje con `author` y `discussion`.
+- Errores: 400 `type` distinto de `TEXT` o `content` vacio; 403 sin Membership `ACTIVE`; 404 `Discussion not found`.
 
-### POST /workspace/discussions/:discussionId/messages/files
-- Auth: Usuario autenticado
+### POST /organizations/:organizationId/workspace/discussions/:discussionId/messages/files
+- Auth: Membership ACTIVE (cualquier role)
 - Content-Type: multipart/form-data
-- Descripcion: Sube un archivo a Cloudinary y crea un DiscussionMessage de tipo IMAGE, AUDIO, VIDEO o FILE. El autor queda marcado como leido hasta ese momento.
+- Descripcion: Sube un archivo a Cloudinary y crea un DiscussionMessage de tipo IMAGE, AUDIO, VIDEO o FILE. El autor queda marcado como leido hasta ese momento. Tamano maximo: `WORKSPACE_ATTACHMENT_MAX_FILE_SIZE_BYTES` (default 25 MB).
 - Form-data:
   - type (IMAGE | AUDIO | VIDEO | FILE)
   - file (binary)
-  - content (opcional, texto adicional)
+  - content (opcional, texto adicional, 1-4000 caracteres)
+- Respuesta 201: el mensaje con `fileUrl`, `fileName`, `mimeType`, `fileSize`, `author` y `discussion`.
+- Errores: 400 `file is required`, MIME real no detectable (salvo `FILE`) o que no coincide con `type`; 403 sin Membership `ACTIVE`; 404 `Discussion not found`.
+- Tambien existe `OPTIONS` sobre esta ruta (sin auth, responde 204) para preflight CORS.
 
-### GET /workspace/discussions/:discussionId/messages
-- Auth: Usuario autenticado
+### GET /organizations/:organizationId/workspace/discussions/:discussionId/messages
+- Auth: Membership ACTIVE (cualquier role)
 - Descripcion: Lista mensajes de la discussion en orden cronologico ascendente.
 - Query params opcionales:
-  - page (default 1)
-  - limit (default 50)
+  - page (default 1, minimo 1)
+  - limit (default 50, minimo 1, maximo efectivo 100)
   - type (TEXT | IMAGE | AUDIO | VIDEO | FILE)
+- Respuesta 200: `{ "data": [...], "page", "limit", "total", "totalPages" }`
+- Errores: 400 paginacion o `type` invalidos; 403 sin Membership `ACTIVE`; 404 `Discussion not found`.
 
-### PATCH /workspace/discussions/:discussionId/messages/:messageId
-- Auth: Usuario autenticado
+### PATCH /organizations/:organizationId/workspace/discussions/:discussionId/messages/:messageId
+- Auth: Membership ACTIVE + ser el autor del mensaje
 - Descripcion: Actualiza el contenido de un mensaje solo si el usuario autenticado es el autor.
 - Restricciones:
   - Solo permite editar mensajes `TEXT`.
@@ -474,15 +578,25 @@ La relacion es administrable solo desde el lado WorkModule.
   "content": "Actualizacion del mensaje"
 }
 ```
+- Respuesta 200: el mensaje actualizado.
+- Errores (en este orden): 403 sin Membership `ACTIVE`; 404 `Discussion not found`; 404 `Discussion message not found` (inexistente, de otra discussion o de otra organization); 403 `You can only modify your own messages`; 400 `Only TEXT messages can be updated` o `content` vacio.
 
-### DELETE /workspace/discussions/:discussionId/messages/:messageId
-- Auth: Usuario autenticado
+### DELETE /organizations/:organizationId/workspace/discussions/:discussionId/messages/:messageId
+- Auth: Membership ACTIVE + ser el autor del mensaje
 - Descripcion: Elimina un mensaje solo si el usuario autenticado es el autor.
 - Reglas:
   - Si el mensaje es `TEXT`, elimina el registro en base de datos.
   - Si el mensaje tiene `cloudinaryPublicId`, primero intenta eliminar el recurso en Cloudinary usando `resource_type` segun tipo real (`IMAGE -> image`, `VIDEO/AUDIO -> video`, `FILE -> raw`) y luego elimina DB.
   - Si Cloudinary responde `not found`, se considera idempotente y se elimina DB.
-  - Si Cloudinary falla (error o respuesta inesperada), no se elimina DB para evitar archivos huerfanos.
+  - Si Cloudinary falla (error o respuesta inesperada), no se elimina DB para evitar archivos huerfanos (500).
+- Respuesta 200:
+```json
+{
+  "deleted": true,
+  "messageId": "UUID"
+}
+```
+- Errores: 403 sin Membership `ACTIVE`; 404 `Discussion not found`; 404 `Discussion message not found`; 403 `You can only modify your own messages`; 500 `Could not delete attachment from Cloudinary`.
 
 ## Devices (FCM)
 
@@ -1046,7 +1160,7 @@ Aplica a `GET /organizations/:organizationId/invitations` y a `POST /organizatio
 Eventos visibles implementados:
 
 1) Discussion creada
-- Trigger: `POST /workspace/discussions`
+- Trigger: `POST /organizations/:organizationId/workspace/discussions`
 - Push:
 ```json
 {
@@ -1064,8 +1178,8 @@ Eventos visibles implementados:
 
 2) Mensaje nuevo (TEXT | IMAGE | AUDIO | VIDEO | FILE)
 - Triggers:
-  - `POST /workspace/discussions/:discussionId/messages`
-  - `POST /workspace/discussions/:discussionId/messages/files`
+  - `POST /organizations/:organizationId/workspace/discussions/:discussionId/messages`
+  - `POST /organizations/:organizationId/workspace/discussions/:discussionId/messages/files`
 - Tipos de notificacion por `messageType`:
   - `TEXT`  -> title `Nuevo mensaje` + body `{fullName} respondió en: {discussion.title}`
   - `IMAGE` -> title `Nueva imagen` + body `{fullName} agregó una imagen en: {discussion.title}`
@@ -1085,7 +1199,7 @@ Eventos visibles implementados:
 ```
 
 3) Cambio de estado
-- Trigger: `PATCH /workspace/discussions/:id/status`
+- Trigger: `PATCH /organizations/:organizationId/workspace/discussions/:id/status`
 - Push:
 ```json
 {
@@ -1108,9 +1222,9 @@ Eventos visibles implementados:
 
 4) Cambios de asignacion (asignar, reemplazar, desasignar)
 - Triggers:
-  - `POST /workspace/discussions/:id/assignments`
-  - `PUT /workspace/discussions/:id/assignments`
-  - `DELETE /workspace/discussions/:id/assignments/:developerUserId`
+  - `POST /organizations/:organizationId/workspace/discussions/:id/assignments`
+  - `PUT /organizations/:organizationId/workspace/discussions/:id/assignments`
+  - `DELETE /organizations/:organizationId/workspace/discussions/:id/assignments/:developerUserId`
 - Push:
 ```json
 {
@@ -1128,7 +1242,7 @@ Eventos visibles implementados:
 Eventos silent sync implementados (data-only):
 
 5) Mensaje editado
-- Trigger: `PATCH /workspace/discussions/:discussionId/messages/:messageId`
+- Trigger: `PATCH /organizations/:organizationId/workspace/discussions/:discussionId/messages/:messageId`
 - Condicion: solo si la edicion fue exitosa.
 - Payload:
 ```json
@@ -1142,7 +1256,7 @@ Eventos silent sync implementados (data-only):
 ```
 
 6) Mensaje eliminado
-- Trigger: `DELETE /workspace/discussions/:discussionId/messages/:messageId`
+- Trigger: `DELETE /organizations/:organizationId/workspace/discussions/:discussionId/messages/:messageId`
 - Condicion: se emite solo despues de eliminacion completa (Cloudinary si aplica + DB).
 - Payload:
 ```json
@@ -1155,14 +1269,14 @@ Eventos silent sync implementados (data-only):
 }
 ```
 
-7) Contexto de discussion actualizado (modules/components)
+7) Contexto de discussion actualizado (modules/components/tags)
 - Triggers:
-  - `POST /workspace/discussions/:id/modules`
-  - `DELETE /workspace/discussions/:id/modules/:moduleId`
-  - `POST /workspace/discussions/:id/components`
-  - `DELETE /workspace/discussions/:id/components/:componentId`
-  - `PATCH /workspace/discussions/:id` (cuando cambia `moduleIds` y/o `componentIds`)
-- Condicion: solo cuando hay cambio real en contexto.
+  - `POST /organizations/:organizationId/workspace/discussions/:id/modules`
+  - `DELETE /organizations/:organizationId/workspace/discussions/:id/modules/:moduleId`
+  - `POST /organizations/:organizationId/workspace/discussions/:id/components`
+  - `DELETE /organizations/:organizationId/workspace/discussions/:id/components/:componentId`
+  - `PATCH /organizations/:organizationId/workspace/discussions/:id` (cuando cambia `moduleIds` y/o `componentIds`, o siempre que se envia `tagIds`)
+- Condicion: en los endpoints de relacion, solo cuando la relacion se agrega/quita. En el PATCH, cuando el set de modules/components cambia realmente; si se envia `tagIds`, se emite aunque el set de tags no cambie. Los endpoints `POST/DELETE .../discussions/:id/tags` no emiten silent sync.
 - Payload:
 ```json
 {
@@ -1235,9 +1349,11 @@ Unicidad: `(organizationId, normalizedName)`. `normalizedName` es el `name` reco
 - otherOrganizationId: UUID de otra organization, para probar aislamiento tenant
 - moduleId: UUID valido de modules de esa organization
 - componentId: UUID valido de components de esa organization
-- discussionId: UUID valido de discussions
+- discussionId: UUID valido de discussions de esa organization (se captura en Postman al crear la discussion)
+- memberDiscussionId: UUID de una discussion creada por el usuario con role MEMBER (Postman)
+- otherComponentId: UUID de un component de otherOrganizationId, para probar aislamiento tenant de relaciones (Postman)
 - tagId: UUID valido de tags de esa organization
-- messageId: UUID valido de discussion_messages
+- messageId: UUID valido de discussion_messages de esa discussion (se captura en Postman al crear el mensaje)
 - developerUserId: UUID de un user con Membership ACTIVE asignable en esa organization (role OWNER, ADMIN o DEVELOPER)
 - deviceToken: FCM registration token valido de Android
 
