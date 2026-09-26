@@ -139,6 +139,10 @@
 			"value": ""
 		},
 		{
+			"key": "memberJoinedAtBeforeLeave",
+			"value": ""
+		},
+		{
 			"key": "moduleName",
 			"value": ""
 		},
@@ -4207,6 +4211,1314 @@
 					"description": "El OWNER queda cubierto por dos reglas independientes: la auto-modificacion prohibida y el membership OWNER protegido. En ambos casos 403."
 				}
 			]
+		},
+		{
+			"name": "Organization Leave",
+			"item": [
+				{
+					"name": "Directorio: captura membershipIds y joinedAt (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"var invitedUserId = pm.collectionVariables.get('invitedUserId');",
+									"var adminUserId = pm.collectionVariables.get('adminUserId');",
+									"data.forEach(function (membership) {",
+									"  if (membership.role === 'OWNER') {",
+									"    pm.collectionVariables.set('ownerMembershipId', membership.id);",
+									"  }",
+									"  if (membership.user && membership.user.id === invitedUserId) {",
+									"    pm.collectionVariables.set('memberMembershipId', membership.id);",
+									"    pm.collectionVariables.set('memberJoinedAtBeforeLeave', membership.joinedAt);",
+									"  }",
+									"  if (membership.user && membership.user.id === adminUserId) {",
+									"    pm.collectionVariables.set('adminMembershipId', membership.id);",
+									"  }",
+									"});",
+									"pm.test('Estado previo capturado', function () {",
+									"  pm.expect(pm.collectionVariables.get('ownerMembershipId')).to.not.eql('');",
+									"  pm.expect(pm.collectionVariables.get('memberMembershipId')).to.not.eql('');",
+									"  pm.expect(pm.collectionVariables.get('adminMembershipId')).to.not.eql('');",
+									"  pm.expect(pm.collectionVariables.get('memberJoinedAtBeforeLeave')).to.not.eql('');",
+									"});",
+									"pm.test('El miembro invitado arranca como MEMBER ACTIVE y el admin como ADMIN ACTIVE', function () {",
+									"  var member = data.filter(function (m) { return m.user && m.user.id === invitedUserId; })[0];",
+									"  var admin = data.filter(function (m) { return m.user && m.user.id === adminUserId; })[0];",
+									"  pm.expect(member.role).to.eql('MEMBER');",
+									"  pm.expect(member.status).to.eql('ACTIVE');",
+									"  pm.expect(admin.role).to.eql('ADMIN');",
+									"  pm.expect(admin.status).to.eql('ACTIVE');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "Setup de la carpeta: guarda los membershipIds y el joinedAt que tiene el miembro ANTES de abandonar, para verificar despues que abandonar y reingresar reutilizan la misma Membership y no modifican joinedAt. Requiere que las carpetas Organizations y Organization Member Suspension hayan dejado al usuario invitado como MEMBER ACTIVE y al usuario admin como ADMIN ACTIVE."
+				},
+				{
+					"name": "OWNER tries to leave (expect 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 409', function () {",
+									"  pm.response.to.have.status(409);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 409', function () {",
+									"  pm.expect(data.statusCode).to.eql(409);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));",
+									"pm.test('El OWNER debe transferir la propiedad antes de abandonar', function () {",
+									"  pm.expect(String(data.message)).to.include('OWNER');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/leave"
+					},
+					"description": "OWNER protegido: no puede abandonar mientras siga siendo OWNER. La transferencia de ownership no existe todavia, asi que responde 409 (regla de dominio) y la Membership no se modifica."
+				},
+				{
+					"name": "OWNER is still ACTIVE after the rejected leave",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('El OWNER conserva acceso y role', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('organizationId'));",
+									"  pm.expect(data.role).to.eql('OWNER');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}"
+					},
+					"description": "El intento rechazado del OWNER no toca su Membership: sigue ACTIVE con role OWNER."
+				},
+				{
+					"name": "ACTIVE member cannot be re-invited (expect 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 409', function () {",
+									"  pm.response.to.have.status(409);",
+									"});",
+									"pm.test('Message says user already belongs', function () {",
+									"  pm.expect(pm.response.text()).to.include('already belongs');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"userId\": \"{{invitedUserId}}\",\n  \"role\": \"MEMBER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					},
+					"description": "Una Membership ACTIVE sigue bloqueando nuevas invitaciones: el usuario ya pertenece a la organization."
+				},
+				{
+					"name": "OWNER suspends the member (setup SUSPENDED)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership queda SUSPENDED', function () {",
+									"  pm.expect(data.status).to.eql('SUSPENDED');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/suspend"
+					},
+					"description": "Setup para los casos SUSPENDED: el OWNER suspende al miembro invitado."
+				},
+				{
+					"name": "Suspended member cannot leave (expect 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 409', function () {",
+									"  pm.response.to.have.status(409);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 409', function () {",
+									"  pm.expect(data.statusCode).to.eql(409);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));",
+									"pm.test('Transicion invalida SUSPENDED -> LEFT', function () {",
+									"  pm.expect(String(data.message)).to.include('SUSPENDED');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/leave"
+					},
+					"description": "SUSPENDED -> LEFT no esta permitido por este endpoint: un usuario suspendido no puede salir para esquivar la suspension. Responde 409 (transicion invalida, igual que suspender un membership ya suspendido), no 403, porque la Membership existe."
+				},
+				{
+					"name": "SUSPENDED member cannot be re-invited (expect 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 409', function () {",
+									"  pm.response.to.have.status(409);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('La invitacion no sustituye la reactivacion administrativa', function () {",
+									"  pm.expect(String(data.message).toLowerCase()).to.include('suspended');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"userId\": \"{{invitedUserId}}\",\n  \"role\": \"MEMBER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					},
+					"description": "Un usuario SUSPENDED sigue perteneciendo a la organization: no se lo reinvita, se lo reactiva desde la administracion (POST .../members/:membershipId/reactivate)."
+				},
+				{
+					"name": "OWNER reactivates the member (restaura ACTIVE)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership vuelve a ACTIVE con role MEMBER', function () {",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"  pm.expect(data.role).to.eql('MEMBER');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{memberMembershipId}}/reactivate"
+					},
+					"description": "Restaura el estado previo a los casos SUSPENDED."
+				},
+				{
+					"name": "Leave with non-UUID organizationId (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 400', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/not-a-uuid/leave"
+					},
+					"description": "ParseUUIDPipe: organizationId invalido responde 400 antes de cualquier regla de negocio."
+				},
+				{
+					"name": "Leave without token (expect 401)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 401', function () {",
+									"  pm.response.to.have.status(401);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/leave"
+					},
+					"description": "El endpoint exige JWT: sin token responde 401."
+				},
+				{
+					"name": "Leave an organization without membership (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));",
+									"pm.test('Sin Membership no hay transicion posible', function () {",
+									"  pm.expect(pm.response.code).to.not.eql(409);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}/leave"
+					},
+					"description": "Anti-IDOR / aislamiento tenant: el usuario admin no tiene Membership en otherOrganizationId (creada por el usuario invitado). Responde 403 sin revelar si la organization existe, igual que cualquier recurso tenant."
+				},
+				{
+					"name": "MEMBER leaves the organization (ACTIVE -> LEFT)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Membership queda LEFT y es la misma Membership', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(data.status).to.eql('LEFT');",
+									"  pm.expect(data.role).to.eql('MEMBER');",
+									"  pm.expect(data.user.id).to.eql(pm.collectionVariables.get('invitedUserId'));",
+									"});",
+									"pm.test('Abandonar no cambia role ni joinedAt', function () {",
+									"  pm.expect(data.joinedAt).to.eql(pm.collectionVariables.get('memberJoinedAtBeforeLeave'));",
+									"});",
+									"pm.test('Response respeta OrganizationMemberResponse', function () {",
+									"  pm.expect(Object.keys(data).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(data.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"  pm.expect(data.user).to.not.have.property('password');",
+									"  pm.expect(data.user).to.not.have.property('roles');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/leave"
+					},
+					"description": "Caso principal: un MEMBER ACTIVE abandona voluntariamente. La Membership no se elimina: conserva id, role y joinedAt y pasa a status LEFT. No lleva body: la organization sale del path y el usuario del JWT."
+				},
+				{
+					"name": "LEFT member tries to leave again (expect 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 409', function () {",
+									"  pm.response.to.have.status(409);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 409', function () {",
+									"  pm.expect(data.statusCode).to.eql(409);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));",
+									"pm.test('Transicion invalida LEFT -> LEFT', function () {",
+									"  pm.expect(String(data.message)).to.include('LEFT');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/leave"
+					},
+					"description": "Abandonar no es idempotente: LEFT -> LEFT responde 409, igual que suspender un membership ya suspendido."
+				},
+				{
+					"name": "LEFT member context excludes the organization (me/context)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"var organizations = data.organizations || [];",
+									"var leftOrganizationId = pm.collectionVariables.get('organizationId');",
+									"var otherOrganizationId = pm.collectionVariables.get('otherOrganizationId');",
+									"pm.test('La organization abandonada no aparece en el contexto', function () {",
+									"  var ids = organizations.map(function (organization) { return organization.id; });",
+									"  pm.expect(ids).to.not.include(leftOrganizationId);",
+									"});",
+									"pm.test('Las otras organizations ACTIVE siguen disponibles', function () {",
+									"  if (!otherOrganizationId) { pm.expect(true).to.eql(true); return; }",
+									"  var ids = organizations.map(function (organization) { return organization.id; });",
+									"  pm.expect(ids).to.include(otherOrganizationId);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/me/context"
+					},
+					"description": "GET /me/context se construye solo con memberships ACTIVE: la organization abandonada desaparece y ya no puede seleccionarse como organization activa. Las demas organizations del usuario no se ven afectadas."
+				},
+				{
+					"name": "LEFT member cannot access the organization (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}"
+					},
+					"description": "Efecto inmediato sin revocar el JWT: todo recurso tenant exige Membership ACTIVE, y LEFT se rechaza igual que si el usuario nunca hubiera pertenecido."
+				},
+				{
+					"name": "LEFT member cannot list workspace modules (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/modules"
+					},
+					"description": "Las rutas /organizations/:organizationId/workspace/... tambien rechazan la Membership LEFT (requireActiveMembership sin excepciones)."
+				},
+				{
+					"name": "LEFT member cannot use the directory (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "El directorio de miembros exige Membership ACTIVE del requester."
+				},
+				{
+					"name": "LEFT member disappears from the directory (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"pm.test('El membership LEFT no aparece en el directorio', function () {",
+									"  var ids = data.map(function (membership) { return membership.id; });",
+									"  pm.expect(ids).to.not.include(pm.collectionVariables.get('memberMembershipId'));",
+									"});",
+									"pm.test('El directorio solo devuelve memberships ACTIVE', function () {",
+									"  data.forEach(function (membership) { pm.expect(membership.status).to.eql('ACTIVE'); });",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "El directorio responde quien forma parte actualmente: solo ACTIVE."
+				},
+				{
+					"name": "LEFT member is not listed in management either (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"pm.test('El membership LEFT tampoco aparece en administracion', function () {",
+									"  var ids = data.map(function (membership) { return membership.id; });",
+									"  pm.expect(ids).to.not.include(pm.collectionVariables.get('memberMembershipId'));",
+									"});",
+									"pm.test('Administracion solo devuelve ACTIVE y SUSPENDED', function () {",
+									"  data.forEach(function (membership) { pm.expect(membership.status).to.be.oneOf(['ACTIVE', 'SUSPENDED']); });",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/manage"
+					},
+					"description": "A diferencia de SUSPENDED, quien se fue por decision propia no se administra: no hay reactivacion administrativa de LEFT. Un historial de antiguos miembros seria otra vista."
+				},
+				{
+					"name": "OWNER re-invites the LEFT user as DEVELOPER",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Invitation is PENDING with role DEVELOPER', function () {",
+									"  pm.expect(data.status).to.eql('PENDING');",
+									"  pm.expect(data.role).to.eql('DEVELOPER');",
+									"  pm.expect(data.invitedUser.id).to.eql(pm.collectionVariables.get('invitedUserId'));",
+									"});",
+									"if (data.token) {",
+									"  pm.collectionVariables.set('invitationToken', data.token);",
+									"  console.log('invitationToken guardado');",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"userId\": \"{{invitedUserId}}\",\n  \"role\": \"DEVELOPER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					},
+					"description": "Una Membership LEFT no bloquea nuevas invitaciones. Se invita con un role distinto al que tenia (MEMBER) para verificar que el reingreso usa el role de la nueva invitacion."
+				},
+				{
+					"name": "LEFT user accepts the new invitation (LEFT -> ACTIVE, role DEVELOPER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Se reutiliza la misma Membership (mismo id), ahora ACTIVE', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"});",
+									"pm.test('El role es el de la nueva invitacion', function () {",
+									"  pm.expect(data.role).to.eql('DEVELOPER');",
+									"});",
+									"pm.test('joinedAt no cambia al reingresar', function () {",
+									"  pm.expect(data.joinedAt).to.eql(pm.collectionVariables.get('memberJoinedAtBeforeLeave'));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organization-invitations/{{invitationToken}}/accept"
+					},
+					"description": "Reingreso: no se crea una segunda Membership para el mismo par user/organization. La Membership LEFT se reutiliza (mismo membershipId) y pasa a ACTIVE con el role de la nueva invitacion; joinedAt sigue siendo la primera incorporacion."
+				},
+				{
+					"name": "Rejoined member is back in the directory with the same membershipId (no duplicate)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"var invitedUserId = pm.collectionVariables.get('invitedUserId');",
+									"var mine = data.filter(function (membership) { return membership.user && membership.user.id === invitedUserId; });",
+									"pm.test('Hay exactamente una Membership para el usuario reingresado', function () {",
+									"  pm.expect(mine.length).to.eql(1);",
+									"  pm.expect(mine[0].id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"});",
+									"pm.test('Reaparece como DEVELOPER ACTIVE con el joinedAt original', function () {",
+									"  pm.expect(mine[0].role).to.eql('DEVELOPER');",
+									"  pm.expect(mine[0].status).to.eql('ACTIVE');",
+									"  pm.expect(mine[0].joinedAt).to.eql(pm.collectionVariables.get('memberJoinedAtBeforeLeave'));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "Verifica desde el directorio que el reingreso no duplico la Membership y que el role es el de la nueva invitacion."
+				},
+				{
+					"name": "Rejoined member context includes the organization again (role DEVELOPER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"var organizations = data.organizations || [];",
+									"var organizationId = pm.collectionVariables.get('organizationId');",
+									"var mine = organizations.filter(function (organization) { return organization.id === organizationId; })[0];",
+									"pm.test('La organization vuelve al contexto con el nuevo role', function () {",
+									"  pm.expect(mine).to.be.an('object');",
+									"  pm.expect(mine.role).to.eql('DEVELOPER');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/me/context"
+					},
+					"description": "Tras aceptar, la organization vuelve a ser seleccionable y el contexto refleja el role de la nueva invitacion."
+				},
+				{
+					"name": "Rejoined member can access the organization again",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Acceso tenant restablecido con role DEVELOPER', function () {",
+									"  pm.expect(data.role).to.eql('DEVELOPER');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}"
+					},
+					"description": "La Membership reactivada por invitacion recupera el acceso tenant."
+				},
+				{
+					"name": "Accepting the same invitation again (expect 400, no longer PENDING)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 400', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));",
+									"pm.test('La invitacion quedo ACCEPTED', function () {",
+									"  pm.expect(String(data.message)).to.include('not pending');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organization-invitations/{{invitationToken}}/accept"
+					},
+					"description": "Consistencia transaccional del reingreso: la invitacion quedo ACCEPTED junto con la transicion LEFT -> ACTIVE, asi que no puede volver a aceptarse."
+				},
+				{
+					"name": "DEVELOPER leaves the organization (ACTIVE -> LEFT)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('DEVELOPER ACTIVE puede abandonar', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(data.status).to.eql('LEFT');",
+									"  pm.expect(data.role).to.eql('DEVELOPER');",
+									"});",
+									"pm.test('Response respeta OrganizationMemberResponse', function () {",
+									"  pm.expect(Object.keys(data).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(data.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"  pm.expect(data.user).to.not.have.property('password');",
+									"  pm.expect(data.user).to.not.have.property('roles');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/leave"
+					},
+					"description": "Un DEVELOPER ACTIVE tambien puede abandonar. Sirve ademas para probar que el role anterior (DEVELOPER) no se conserva al reingresar con otra invitacion."
+				},
+				{
+					"name": "OWNER re-invites the LEFT user as MEMBER (restaura role original)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Invitation is PENDING with role MEMBER', function () {",
+									"  pm.expect(data.status).to.eql('PENDING');",
+									"  pm.expect(data.role).to.eql('MEMBER');",
+									"});",
+									"if (data.token) {",
+									"  pm.collectionVariables.set('invitationToken', data.token);",
+									"  console.log('invitationToken guardado');",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"userId\": \"{{invitedUserId}}\",\n  \"role\": \"MEMBER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					},
+					"description": "Nueva invitacion con el role original del usuario invitado (MEMBER), que es el que esperan las carpetas siguientes."
+				},
+				{
+					"name": "User accepts again: previous DEVELOPER role is not kept (LEFT -> ACTIVE, role MEMBER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Misma Membership, ACTIVE, con el role de la nueva invitacion', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"  pm.expect(data.role).to.eql('MEMBER');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organization-invitations/{{invitationToken}}/accept"
+					},
+					"description": "Ejemplo del prompt: DEVELOPER / LEFT + invitacion MEMBER -> MEMBER / ACTIVE. El role anterior no se conserva automaticamente."
+				},
+				{
+					"name": "ADMIN leaves the organization (ACTIVE -> LEFT)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('ADMIN ACTIVE puede abandonar', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('adminMembershipId'));",
+									"  pm.expect(data.status).to.eql('LEFT');",
+									"  pm.expect(data.role).to.eql('ADMIN');",
+									"  pm.expect(data.user.id).to.eql(pm.collectionVariables.get('adminUserId'));",
+									"});",
+									"pm.test('Response respeta OrganizationMemberResponse', function () {",
+									"  pm.expect(Object.keys(data).sort()).to.eql(['id', 'joinedAt', 'role', 'status', 'user']);",
+									"  pm.expect(Object.keys(data.user).sort()).to.eql(['email', 'fullName', 'id']);",
+									"  pm.expect(data.user).to.not.have.property('password');",
+									"  pm.expect(data.user).to.not.have.property('roles');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/leave"
+					},
+					"description": "Un ADMIN ACTIVE tambien puede abandonar voluntariamente. Solo el OWNER esta protegido."
+				},
+				{
+					"name": "Former ADMIN cannot use the management list (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/manage"
+					},
+					"description": "La Membership LEFT no conserva ningun permiso: el role ADMIN registrado en la fila no otorga acceso."
+				},
+				{
+					"name": "Former ADMIN cannot create invitations (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"userId\": \"{{invitedUserId}}\",\n  \"role\": \"MEMBER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					},
+					"description": "Idem para las acciones administrativas: sin Membership ACTIVE no hay permiso OWNER/ADMIN."
+				},
+				{
+					"name": "OWNER re-invites the former ADMIN as ADMIN (restaura estado)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Invitation is PENDING with role ADMIN', function () {",
+									"  pm.expect(data.status).to.eql('PENDING');",
+									"  pm.expect(data.role).to.eql('ADMIN');",
+									"});",
+									"if (data.token) { pm.collectionVariables.set('adminInvitationToken', data.token); }"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"userId\": \"{{adminUserId}}\",\n  \"role\": \"ADMIN\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/invitations"
+					},
+					"description": "Reinvita al usuario admin con su role original para que las carpetas siguientes encuentren un ADMIN ACTIVE."
+				},
+				{
+					"name": "Admin user accepts (LEFT -> ACTIVE, role ADMIN)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Misma Membership ADMIN, ACTIVE otra vez', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('adminMembershipId'));",
+									"  pm.expect(data.status).to.eql('ACTIVE');",
+									"  pm.expect(data.role).to.eql('ADMIN');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organization-invitations/{{adminInvitationToken}}/accept"
+					},
+					"description": "Restaura el ADMIN ACTIVE reutilizando su Membership LEFT (mismo membershipId)."
+				},
+				{
+					"name": "Directorio final: estado restaurado sin duplicados (OWNER)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = [];",
+									"try { data = pm.response.json(); } catch (e) { data = []; }",
+									"var invitedUserId = pm.collectionVariables.get('invitedUserId');",
+									"var adminUserId = pm.collectionVariables.get('adminUserId');",
+									"var member = data.filter(function (m) { return m.user && m.user.id === invitedUserId; });",
+									"var admin = data.filter(function (m) { return m.user && m.user.id === adminUserId; });",
+									"pm.test('Una sola Membership por usuario, con los membershipIds originales', function () {",
+									"  pm.expect(member.length).to.eql(1);",
+									"  pm.expect(admin.length).to.eql(1);",
+									"  pm.expect(member[0].id).to.eql(pm.collectionVariables.get('memberMembershipId'));",
+									"  pm.expect(admin[0].id).to.eql(pm.collectionVariables.get('adminMembershipId'));",
+									"});",
+									"pm.test('Roles y status restaurados para las carpetas siguientes', function () {",
+									"  pm.expect(member[0].role).to.eql('MEMBER');",
+									"  pm.expect(member[0].status).to.eql('ACTIVE');",
+									"  pm.expect(admin[0].role).to.eql('ADMIN');",
+									"  pm.expect(admin[0].status).to.eql('ACTIVE');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members"
+					},
+					"description": "Cierre de la carpeta: la organization queda como estaba (usuario invitado MEMBER ACTIVE, usuario admin ADMIN ACTIVE), sin memberships duplicadas y con los mismos membershipIds."
+				}
+			],
+			"description": "Abandono voluntario de la organization (POST /organizations/:organizationId/leave, ACTIVE -> LEFT) y reingreso mediante una nueva invitacion (LEFT -> ACTIVE con el role de la nueva invitacion, reutilizando la misma Membership). Cubre OWNER protegido (409), SUSPENDED y LEFT repetido (409), perdida de acceso tenant, exclusion de /me/context, directorio y administracion, y las reglas de reinvitacion (ACTIVE y SUSPENDED -> 409, LEFT permitido). Depende de las variables de las carpetas Auth, Organizations y Organization Member Suspension: organizationId, otherOrganizationId, token (OWNER), invitedUserToken/invitedUserId (MEMBER) y adminUserToken/adminUserId (ADMIN). Deja la organization en el mismo estado en que la encuentra."
 		},
 		{
 			"name": "Modules",
