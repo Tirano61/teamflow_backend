@@ -30,7 +30,8 @@ const ROLE_SCOPE_BY_REQUESTER_ROLE: Partial<Record<OrganizationRole, Organizatio
 
 /**
  * Statuses que devuelve el directorio general de miembros.
- * Responde "quien forma parte actualmente de la organization", asi que solo incluye `ACTIVE`.
+ * Responde "quien forma parte actualmente de la organization", asi que solo incluye `ACTIVE`:
+ * ni `SUSPENDED` ni `LEFT` forman parte actualmente.
  */
 const DIRECTORY_MEMBER_STATUSES: MembershipStatus[] = [MembershipStatus.ACTIVE];
 
@@ -38,6 +39,9 @@ const DIRECTORY_MEMBER_STATUSES: MembershipStatus[] = [MembershipStatus.ACTIVE];
  * Statuses que devuelve el listado administrativo de memberships.
  * Agrega `SUSPENDED` porque OWNER/ADMIN necesitan seguir viendo al miembro que suspendieron
  * para poder reactivarlo o cambiarle el role despues.
+ * `LEFT` queda fuera a proposito: quien abandono voluntariamente no se administra desde aca
+ * (no se reactiva ni se le cambia el role); vuelve solo aceptando una nueva invitacion.
+ * Un historial de antiguos miembros seria otra vista.
  */
 const MANAGEMENT_MEMBER_STATUSES: MembershipStatus[] = [
 	MembershipStatus.ACTIVE,
@@ -45,12 +49,19 @@ const MANAGEMENT_MEMBER_STATUSES: MembershipStatus[] = [
 ];
 
 /**
- * Transiciones validas de status de Membership y sus mensajes de conflicto.
+ * Statuses que puede fijar la administracion de miembros (suspend / reactivate).
+ * `LEFT` no esta: solo lo fija el propio usuario con `leaveOrganization` y solo lo revierte
+ * la aceptacion de una nueva invitacion (LEFT -> ACTIVE).
+ */
+export type ManagedMembershipStatus = MembershipStatus.ACTIVE | MembershipStatus.SUSPENDED;
+
+/**
+ * Transiciones administrativas validas de status de Membership y sus mensajes de conflicto.
  * Suspender solo aplica sobre ACTIVE y reactivar solo sobre SUSPENDED:
- * cualquier otra combinacion es una transicion invalida (409).
+ * cualquier otra combinacion (incluida una Membership LEFT) es una transicion invalida (409).
  */
 const MEMBERSHIP_STATUS_TRANSITIONS: Record<
-	MembershipStatus,
+	ManagedMembershipStatus,
 	{
 		expectedCurrentStatus: MembershipStatus;
 		actionPastParticiple: string;
@@ -384,7 +395,7 @@ export class MembershipsService {
 		organizationId: string,
 		membershipId: string,
 		requesterMembership: Membership,
-		newStatus: MembershipStatus,
+		newStatus: ManagedMembershipStatus,
 	): Promise<OrganizationMemberResponse> {
 		const transition = MEMBERSHIP_STATUS_TRANSITIONS[newStatus];
 
@@ -426,5 +437,53 @@ export class MembershipsService {
 
 		targetMembership.status = newStatus;
 		return this.toOrganizationMemberResponse(targetMembership);
+	}
+
+	/**
+	 * Abandono voluntario de la organization: `ACTIVE -> LEFT` sobre la Membership del propio
+	 * usuario autenticado. No es una accion administrativa: no recibe `membershipId` ni `userId`,
+	 * el usuario afectado sale exclusivamente del JWT y la organization del path (anti-IDOR).
+	 * No elimina la Membership: `LEFT` conserva identidad e historial (discussions, mensajes,
+	 * `createdBy`, `author`) y permite volver a invitar al usuario mas adelante.
+	 * Solo cambia `status`: role, joinedAt, user y organization quedan intactos.
+	 */
+	async leaveOrganization(
+		userId: string,
+		organizationId: string,
+	): Promise<OrganizationMemberResponse> {
+		/// Sin Membership en esa organization: 403 identico al de cualquier recurso tenant,
+		/// sin revelar si la organization existe.
+		const membership = await this.requireMembership(userId, organizationId);
+
+		/// Transicion invalida (SUSPENDED -> LEFT o LEFT -> LEFT): 409, igual que suspender un
+		/// membership ya suspendido. Un SUSPENDED no puede "salir" para esquivar la suspension y
+		/// abandonar no es idempotente.
+		if (membership.status !== MembershipStatus.ACTIVE) {
+			throw new ConflictException(
+				`Membership cannot be left because its status is ${membership.status}`,
+			);
+		}
+
+		/// OWNER protegido: la organization no puede quedar sin OWNER y la transferencia de
+		/// ownership todavia no existe, asi que el OWNER no puede abandonar por este flujo.
+		if (membership.role === OrganizationRole.OWNER) {
+			throw new ConflictException(
+				'OWNER cannot leave the organization: ownership must be transferred first',
+			);
+		}
+
+		/// Update condicional por role y status previos (mismo enfoque que suspend/reactivate y
+		/// cambio de role): si otro request suspendio o cambio el role en el medio, no se pisa.
+		const updateResult = await this.membershipRepository.update(
+			{ id: membership.id, role: membership.role, status: MembershipStatus.ACTIVE },
+			{ status: MembershipStatus.LEFT },
+		);
+
+		if (updateResult.affected === 0) {
+			throw new ConflictException('Membership was modified concurrently, retry the operation');
+		}
+
+		membership.status = MembershipStatus.LEFT;
+		return this.toOrganizationMemberResponse(membership);
 	}
 }

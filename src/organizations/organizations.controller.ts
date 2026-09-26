@@ -90,6 +90,17 @@ export class OrganizationsController {
 		return this.organizationsService.reactivateMember(organizationId, membershipId, user);
 	}
 
+	/// Abandono voluntario (ACTIVE -> LEFT): actua siempre sobre la Membership del usuario
+	/// autenticado. No recibe body ni membershipId/userId: la organization sale del path y el
+	/// usuario del JWT. El OWNER no puede abandonar (409) mientras no exista transferencia de ownership.
+	@Post(':organizationId/leave')
+	leaveOrganization(
+		@Param('organizationId', new ParseUUIDPipe()) organizationId: string,
+		@GetUser() user: User,
+	) {
+		return this.organizationsService.leaveOrganization(organizationId, user);
+	}
+
 	@Post(':organizationId/invitations')
 	createInvitation(
 		@Param('organizationId', new ParseUUIDPipe()) organizationId: string,

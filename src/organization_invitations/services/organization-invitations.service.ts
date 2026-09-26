@@ -162,16 +162,26 @@ export class OrganizationInvitationsService {
 			throw new BadRequestException('You cannot invite yourself');
 		}
 
+		/// Se busca cualquier Membership del invitado en la organization, sin filtrar por status,
+		/// para distinguir los tres casos:
+		/// - ACTIVE: ya pertenece -> 409.
+		/// - SUSPENDED: sigue perteneciendo; una invitacion no sustituye la reactivacion
+		///   administrativa (`POST .../members/:membershipId/reactivate`) -> 409.
+		/// - LEFT: abandono voluntariamente y puede recibir una nueva invitacion. Al aceptarla se
+		///   reutiliza esa misma Membership (LEFT -> ACTIVE) con el role de la nueva invitacion.
 		const existingMembership = await this.membershipRepository.findOne({
 			where: {
 				user: { id: invitedUser.id },
 				organization: { id: organizationId },
-				status: MembershipStatus.ACTIVE,
 			},
 		});
 
-		if (existingMembership) {
-			throw new ConflictException('User already belongs to this organization');
+		if (existingMembership && existingMembership.status !== MembershipStatus.LEFT) {
+			throw new ConflictException(
+				existingMembership.status === MembershipStatus.SUSPENDED
+					? 'User has a suspended membership in this organization; reactivate it instead of inviting again'
+					: 'User already belongs to this organization',
+			);
 		}
 
 		const normalizedEmail = invitedUser.email.trim().toLowerCase();
@@ -342,6 +352,8 @@ export class OrganizationInvitationsService {
 				invitation.invitedUserId = user.id;
 			}
 
+			/// Cualquier Membership previa del usuario en la organization, sin filtrar por status:
+			/// nunca se crea una segunda Membership para el mismo par (user, organization).
 			const existingMembership = await membershipRepository.findOne({
 				where: {
 					user: { id: user.id },
@@ -349,8 +361,43 @@ export class OrganizationInvitationsService {
 				},
 			});
 
-			if (existingMembership) {
+			/// ACTIVE o SUSPENDED: sigue perteneciendo -> 409 y la invitacion queda PENDING.
+			/// Un SUSPENDED no reingresa aceptando invitaciones: eso es reactivacion administrativa.
+			if (existingMembership && existingMembership.status !== MembershipStatus.LEFT) {
 				throw new ConflictException('User already belongs to this organization');
+			}
+
+			invitation.status = InvitationStatus.ACCEPTED;
+			invitation.acceptedAt = new Date();
+
+			if (existingMembership) {
+				/// Reingreso: se reutiliza la Membership LEFT (mismo id) con el role de la nueva
+				/// invitacion; el role anterior no se conserva. `joinedAt` no se toca: sigue
+				/// representando la primera incorporacion, igual que en suspend/reactivate.
+				/// Update condicional por status LEFT dentro de la misma transaccion: dos
+				/// aceptaciones concurrentes no producen una doble transicion, y si falla no queda
+				/// invitation ACCEPTED con Membership LEFT ni Membership ACTIVE con invitation PENDING.
+				const updateResult = await membershipRepository.update(
+					{ id: existingMembership.id, status: MembershipStatus.LEFT },
+					{ role: invitation.role, status: MembershipStatus.ACTIVE },
+				);
+
+				if (updateResult.affected === 0) {
+					throw new ConflictException(
+						'Membership was modified concurrently, retry the operation',
+					);
+				}
+
+				await invitationRepository.save(invitation);
+
+				/// Misma forma de respuesta que el alta: la Membership con `user` y `organization`
+				/// reducidos a su id (no se expone la entidad User completa).
+				const rejoinedMembership = await membershipRepository.findOneOrFail({
+					where: { id: existingMembership.id },
+				});
+				rejoinedMembership.user = { id: user.id } as User;
+				rejoinedMembership.organization = { id: invitation.organization.id } as Organization;
+				return rejoinedMembership;
 			}
 
 			const membership = membershipRepository.create({
@@ -360,9 +407,6 @@ export class OrganizationInvitationsService {
 				status: MembershipStatus.ACTIVE,
 				joinedAt: new Date(),
 			});
-
-			invitation.status = InvitationStatus.ACCEPTED;
-			invitation.acceptedAt = new Date();
 
 			await invitationRepository.save(invitation);
 			return membershipRepository.save(membership);

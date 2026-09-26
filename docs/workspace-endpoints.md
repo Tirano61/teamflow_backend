@@ -14,6 +14,7 @@ Autorizacion tenant:
 - Ningun endpoint de Workspace depende del rol global `developer` del `User` (`roles`, usado solo por los endpoints de administracion de `/auth`).
 - El backend no persiste una organization activa: la organization siempre llega por la ruta.
 - Una Membership `SUSPENDED` no tiene acceso tenant aunque conserve role `OWNER` o `ADMIN`.
+- Una Membership `LEFT` (el usuario abandono la organization con `POST /organizations/:organizationId/leave`) tampoco tiene acceso tenant: recibe 403 igual que si nunca hubiera pertenecido.
 
 ## Auth
 
@@ -76,7 +77,7 @@ Autorizacion tenant:
 - Descripcion: Retorna contexto de onboarding del usuario autenticado para decidir flujo post-login.
 - Incluye:
   - `user`: id, email, fullName
-  - `organizations`: solo memberships `ACTIVE` con id, name, slug, role, joinedAt
+  - `organizations`: solo memberships `ACTIVE` con id, name, slug, role, joinedAt. Las memberships `SUSPENDED` y `LEFT` (abandono voluntario) no aparecen: una organization que el usuario abandono deja de poder seleccionarse como organization activa hasta que acepte una nueva invitacion.
   - `pendingInvitations`: solo invitaciones pendientes validas dirigidas al usuario autenticado (`invitedUser`)
   - `organizationCount`: cantidad de organizaciones activas
 - Notas:
@@ -678,7 +679,8 @@ Son dos conceptos distintos y tienen endpoints distintos.
 - El **directorio** responde "quien forma parte actualmente de la organization". No es una pantalla administrativa.
 - La **administracion** es el listado desde el que se cambian roles y se suspende/reactiva. Es el unico que expone memberships `SUSPENDED`.
 - Ninguno de los dos filtra por role: en ambos aparecen `OWNER`, `ADMIN`, `DEVELOPER` y `MEMBER`. La unica diferencia es el `status`.
-- Los dos usan el mismo contrato de respuesta (`OrganizationMemberResponse`), igual que las respuestas de cambio de role, suspension y reactivacion.
+- Los dos usan el mismo contrato de respuesta (`OrganizationMemberResponse`), igual que las respuestas de cambio de role, suspension, reactivacion y abandono.
+- Ninguno de los dos devuelve memberships `LEFT` (abandono voluntario con `POST /organizations/:organizationId/leave`): quien se fue por decision propia no forma parte de la organization ni se administra desde estas pantallas. Un historial de antiguos miembros seria otra vista, fuera de alcance.
 
 ### GET /organizations/:organizationId/members
 - Auth: Usuario autenticado
@@ -690,15 +692,16 @@ Son dos conceptos distintos y tienen endpoints distintos.
 - No recibe query params: no hay filtros configurables ni paginacion.
 
 #### Que devuelve
-| Requester | ACTIVE visibles | SUSPENDED visibles |
-| --------- | --------------- | ------------------ |
-| OWNER     | Si              | No                 |
-| ADMIN     | Si              | No                 |
-| DEVELOPER | Si              | No                 |
-| MEMBER    | Si              | No                 |
+| Requester | ACTIVE visibles | SUSPENDED visibles | LEFT visibles |
+| --------- | --------------- | ------------------ | ------------- |
+| OWNER     | Si              | No                 | No            |
+| ADMIN     | Si              | No                 | No            |
+| DEVELOPER | Si              | No                 | No            |
+| MEMBER    | Si              | No                 | No            |
 
 - El filtro es por `status`, nunca por role: cualquier requester `ACTIVE` ve los memberships `ACTIVE` con role `OWNER`, `ADMIN`, `DEVELOPER` y `MEMBER`.
 - Un miembro suspendido **desaparece** de este listado para todos, incluido el `OWNER`. Vuelve a aparecer cuando se lo reactiva.
+- Un miembro que abandono la organization (`LEFT`) tambien desaparece. Vuelve a aparecer solo si acepta una nueva invitacion (`LEFT -> ACTIVE`).
 - Orden: por `createdAt` ascendente.
 
 #### Proteccion tenant
@@ -737,12 +740,12 @@ Son dos conceptos distintos y tienen endpoints distintos.
 - No recibe query params: no hay filtros configurables ni paginacion.
 
 #### Que devuelve
-| Requester | Accede   | ACTIVE visibles | SUSPENDED visibles |
-| --------- | -------- | --------------- | ------------------ |
-| OWNER     | Si       | Si              | Si                 |
-| ADMIN     | Si       | Si              | Si                 |
-| DEVELOPER | No (403) | -               | -                  |
-| MEMBER    | No (403) | -               | -                  |
+| Requester | Accede   | ACTIVE visibles | SUSPENDED visibles | LEFT visibles |
+| --------- | -------- | --------------- | ------------------ | ------------- |
+| OWNER     | Si       | Si              | Si                 | No            |
+| ADMIN     | Si       | Si              | Si                 | No            |
+| DEVELOPER | No (403) | -               | -                  | -             |
+| MEMBER    | No (403) | -               | -                  | -             |
 
 - No filtra por role: `OWNER` y `ADMIN` ven memberships `OWNER`, `ADMIN`, `DEVELOPER` y `MEMBER`, en cualquiera de los dos status.
 - Orden: por `createdAt` ascendente.
@@ -759,6 +762,7 @@ Son dos conceptos distintos y tienen endpoints distintos.
 - Por eso `OWNER`/`ADMIN` pueden suspender a un miembro, recargar este listado y seguir obteniendo su `membershipId` para reactivarlo, aunque ese miembro ya no aparezca en el directorio general.
 - Aparecer aca no otorga acceso tenant: el usuario `SUSPENDED` sigue recibiendo 403 en todos los recursos scoped por esa organization, incluidos el directorio y este mismo endpoint.
 - `GET /me/context` no cambio: sigue listando solo organizations donde el usuario tiene Membership `ACTIVE`, por lo que una organization donde esta `SUSPENDED` no aparece.
+- Un Membership `LEFT` (abandono voluntario) **no** aparece en este listado: no se reactiva ni se le cambia el role desde la administracion. Vuelve unicamente si acepta una nueva invitacion (`LEFT -> ACTIVE`, ver `POST /organizations/:organizationId/leave`).
 
 #### Proteccion tenant
 - Orden de validacion: Membership `ACTIVE` del requester -> permiso `OWNER`/`ADMIN` -> query scoped por `organizationId`.
@@ -795,7 +799,7 @@ Son dos conceptos distintos y tienen endpoints distintos.
   - 400 `organizationId` no es UUID
   - 401 sin token valido
   - 403 requester sin Membership en la organization, con Membership no `ACTIVE`, o con role `DEVELOPER`/`MEMBER`
-- Fuera de alcance de este endpoint: paginacion, filtros configurables por `status` o `role`, busqueda, eliminacion de miembros, transferencia de ownership, salir de la organization e historial/auditoria.
+- Fuera de alcance de este endpoint: paginacion, filtros configurables por `status` o `role`, busqueda, eliminacion de miembros, transferencia de ownership, salir de la organization (tiene endpoint propio: `POST /organizations/:organizationId/leave`), historial de antiguos miembros (`LEFT`) y auditoria.
 
 ### PATCH /organizations/:organizationId/members/:membershipId/role
 - Auth: Usuario autenticado
@@ -876,7 +880,7 @@ Son dos conceptos distintos y tienen endpoints distintos.
   - 403 requester sin Membership en la organization, Membership no `ACTIVE`, role insuficiente, regla OWNER/ADMIN no cumplida, o membership objetivo `OWNER`
   - 404 membership inexistente o perteneciente a otra organization
   - 409 membership objetivo no `ACTIVE` (por ejemplo `SUSPENDED`), o cambio concurrente de role
-- Fuera de alcance de este endpoint: transferencia de OWNER, eliminar miembros, salir de la organization, historial de roles y auditoria. Suspender y reactivar miembros tienen endpoints propios (`POST .../members/:membershipId/suspend` y `.../reactivate`) y no cambian el role.
+- Fuera de alcance de este endpoint: transferencia de OWNER, eliminar miembros, salir de la organization (tiene endpoint propio: `POST /organizations/:organizationId/leave`), historial de roles y auditoria. Suspender y reactivar miembros tienen endpoints propios (`POST .../members/:membershipId/suspend` y `.../reactivate`) y no cambian el role.
 
 ### POST /organizations/:organizationId/members/:membershipId/suspend
 ### POST /organizations/:organizationId/members/:membershipId/reactivate
@@ -979,7 +983,91 @@ Son dos conceptos distintos y tienen endpoints distintos.
   - 403 requester sin Membership en la organization, Membership del requester no `ACTIVE`, role insuficiente, membership objetivo es el del propio requester, membership objetivo `OWNER`, o regla OWNER/ADMIN no cumplida
   - 404 membership inexistente o perteneciente a otra organization
   - 409 transicion invalida (`ACTIVE -> ACTIVE`, `SUSPENDED -> SUSPENDED`) o cambio concurrente de status
-- Fuera de alcance de estos endpoints: eliminar Membership, salir de la organization, transferencia de OWNER, cambio de role, historial/auditoria y notificaciones.
+- Fuera de alcance de estos endpoints: eliminar Membership, salir de la organization (tiene endpoint propio: `POST /organizations/:organizationId/leave`, que lleva la Membership a `LEFT`; una Membership `LEFT` no se suspende ni se reactiva desde aca -> 409), transferencia de OWNER, cambio de role, historial/auditoria y notificaciones.
+
+### POST /organizations/:organizationId/leave
+- Auth: Usuario autenticado
+- Permisos: cualquier Membership `ACTIVE` con role `ADMIN`, `DEVELOPER` o `MEMBER` en esa organization. El `OWNER` no puede abandonar (409, ver abajo).
+- Descripcion: Abandono **voluntario** de la organization por el propio usuario autenticado. Cambia unicamente el `status` de su Membership: `ACTIVE` -> `LEFT`.
+- No elimina la Membership ni ningun dato: `LEFT` conserva `id` (`membershipId`), `role`, `joinedAt`, `user` y `organization`, y no toca discussions, mensajes, asignaciones, `createdBy`, `author` ni auditoria. La razon de `LEFT` es conservar identidad e historial y permitir un reingreso posterior.
+- Actua **siempre** sobre la Membership del usuario del JWT en el `organizationId` del path. No existe forma de abandonar en nombre de otro usuario.
+- Parametros:
+  - `organizationId` (path, UUID) -> si no es UUID, 400
+- Body: no lleva body. No recibe `membershipId`, `userId`, `role` ni `status`.
+
+#### Estados de Membership
+| Status      | Significado                                                   | Acceso tenant | Directorio | Administracion | `/me/context` |
+| ----------- | ------------------------------------------------------------- | ------------- | ---------- | -------------- | ------------- |
+| `ACTIVE`    | pertenece actualmente a la organization                       | Si            | Si         | Si             | Si            |
+| `SUSPENDED` | acceso suspendido administrativamente (`POST .../suspend`)    | No (403)      | No         | Si             | No            |
+| `LEFT`      | el propio usuario abandono voluntariamente (`POST .../leave`) | No (403)      | No         | No             | No            |
+
+#### Orden de validacion
+1. `organizationId` debe ser UUID -> si no, 400.
+2. El usuario autenticado debe tener Membership (de cualquier status) en `organizationId` -> si no, 403. Es el mismo 403 que recibe en cualquier recurso tenant y no revela si la organization existe.
+3. La Membership debe estar `ACTIVE` -> si esta `SUSPENDED` o `LEFT`, 409 (transicion invalida).
+4. El role no puede ser `OWNER` -> si lo es, 409.
+5. UPDATE condicional `ACTIVE -> LEFT` -> si otro request cambio el status o el role en el medio, 409.
+
+#### OWNER protegido
+- El `OWNER` no puede abandonar la organization mientras siga siendo `OWNER`: responde 409 con el mensaje `OWNER cannot leave the organization: ownership must be transferred first`. Su Membership no se modifica.
+- La transferencia de ownership no esta implementada y sera un flujo aparte. Mientras tanto se mantiene un unico `OWNER` por organization, que sigue protegido por las reglas existentes de `suspend`/`reactivate` y de cambio de role (nadie recibe `OWNER` ni lo pierde desde esos endpoints).
+
+#### Transiciones invalidas
+- `SUSPENDED -> LEFT`: 409 (`Membership cannot be left because its status is SUSPENDED`). Un usuario suspendido no puede "salir" para esquivar la suspension: el `status` de una Membership suspendida solo lo cambia la administracion (`POST .../reactivate`).
+- `LEFT -> LEFT`: 409 (`Membership cannot be left because its status is LEFT`). Abandonar no es idempotente: se usa 409 y no 200, igual que suspender un membership ya suspendido o cancelar una invitacion que no esta `PENDING`.
+- En estos dos casos se responde 409 y no 403 porque el usuario **si** tiene una Membership en la organization; lo que falla es la transicion de estado. El 403 se reserva para quien no tiene Membership.
+
+#### Efecto de abandonar
+- No hay revocacion global del JWT: el token sigue siendo valido para otras organizations.
+- El acceso tenant a esa organization se corta de inmediato, exactamente igual que para alguien que nunca pertenecio, porque todo recurso scoped por organization exige Membership `ACTIVE` (`requireActiveMembership`, sin excepciones para `LEFT`). El usuario `LEFT` recibe 403 en, por ejemplo:
+  - `GET /organizations/:organizationId`
+  - `GET /organizations/:organizationId/members` y `.../members/manage`
+  - `GET /organizations/:organizationId/invitations` y `POST /organizations/:organizationId/invitations`
+  - toda ruta `/organizations/:organizationId/workspace/...` (modules, components, tags, discussions, mensajes, asignaciones y contexto)
+  - `POST /organizations/:organizationId/leave` responde 409 y no 403, porque la Membership existe (ver arriba).
+- `GET /me/context` y `GET /organizations/me` dejan de listar esa organization: ambos se construyen solo con memberships `ACTIVE` (no requirio cambios). La organization abandonada ya no puede seleccionarse como organization activa. Las invitaciones pendientes del usuario no se ven afectadas.
+- El membership `LEFT` **desaparece del directorio** `GET .../members` y **tampoco aparece en la administracion** `GET .../members/manage`: a diferencia de `SUSPENDED`, quien se fue por decision propia no se administra (no existe reactivacion administrativa de `LEFT`). Un historial de antiguos miembros seria otra vista, fuera de alcance.
+- El usuario `LEFT` deja de ser asignable como developer (`GET .../workspace/developers` y las asignaciones ya exigian Membership `ACTIVE`) y deja de recibir push de esa organization (mismo filtro).
+- Los datos creados por el usuario (discussions, mensajes, asignaciones existentes) no se modifican ni se eliminan.
+
+#### Reingreso: nueva invitacion (LEFT -> ACTIVE)
+- Un usuario `LEFT` **puede volver a ser invitado** con `POST /organizations/:organizationId/invitations` (OWNER/ADMIN). Un usuario `ACTIVE` o `SUSPENDED` no (409, ver ese endpoint).
+- Al aceptar la nueva invitacion (`POST /organization-invitations/:token/accept`) **no se crea una segunda Membership**: se reutiliza la Membership `LEFT` existente (mismo `membershipId`), que pasa a `ACTIVE` con el `role` de la nueva invitacion. El role anterior no se conserva.
+  - Ejemplo: `DEVELOPER / LEFT` + nueva invitacion `MEMBER` -> `MEMBER / ACTIVE`.
+- `joinedAt` **no se modifica** al reingresar: sigue representando la primera incorporacion a la organization, la misma semantica que preservan `suspend`/`reactivate` y la que ya exponen el directorio y `/me/context`. No existe `leftAt`.
+- Ver detalles y concurrencia en `POST /organization-invitations/:token/accept`.
+
+#### Proteccion tenant / anti-IDOR
+- La organization sale exclusivamente de `:organizationId` y el usuario afectado exclusivamente del JWT. No hay parametro ni body con el que abandonar la Membership de otro usuario.
+- La Membership se busca siempre por `user_id = usuario autenticado` **y** `organization_id = :organizationId`, y el UPDATE se hace sobre ese `id` concreto.
+- Un usuario que no pertenece a la organization recibe 403 sin distinguir si la organization existe.
+
+#### Concurrencia
+- El UPDATE es condicional sobre `status = ACTIVE` **y** el `role` leido (mismo enfoque que `suspend`/`reactivate` y que el cambio de role), y escribe unicamente la columna `status`.
+- Si entre la lectura y el UPDATE otro request suspendio al usuario o le cambio el role, responde 409 (`Membership was modified concurrently, retry the operation`) y no pisa ese cambio. Dos `leave` concurrentes producen un unico `ACTIVE -> LEFT`; el otro recibe 409.
+
+- Codigo de exito: `201` (comportamiento por defecto de Nest para POST en este proyecto, igual que `POST .../members/:membershipId/suspend`).
+- Respuesta: mismo contrato `OrganizationMemberResponse` que `suspend`/`reactivate`, ya con `status: "LEFT"`. No devuelve la entidad `user` completa.
+```json
+{
+  "id": "7f1a2b3c-4d5e-4f60-8a1b-2c3d4e5f6071",
+  "role": "MEMBER",
+  "status": "LEFT",
+  "joinedAt": "2026-09-06T20:00:00.000Z",
+  "user": {
+    "id": "4c0d3f5a-4d0d-4b0b-9d2a-8a4d1f0b2c31",
+    "email": "usuario@email.com",
+    "fullName": "Usuario Invitado"
+  }
+}
+```
+- Errores:
+  - 400 `organizationId` no es UUID
+  - 401 sin token valido
+  - 403 el usuario autenticado no tiene Membership en la organization
+  - 409 Membership `SUSPENDED` o `LEFT` (transicion invalida), role `OWNER`, o cambio concurrente de status/role
+- Fuera de alcance de este endpoint: transferencia de OWNER, que el OWNER abandone, eliminacion fisica de Membership, eliminacion de la organization, reactivacion administrativa de `LEFT`, historial/pantalla de antiguos miembros, `leftAt`, notificaciones por email y cambios en el frontend.
 
 ### POST /organizations/:organizationId/invitations
 - Auth: Usuario autenticado
@@ -997,7 +1085,9 @@ Son dos conceptos distintos y tienen endpoints distintos.
   - `userId` debe ser un UUID valido y existir -> 400 / 404
   - no se puede invitar al propio usuario autenticado -> 400
   - `role` permitido: ADMIN | DEVELOPER | MEMBER. `OWNER` no es invitable -> 400
-  - el usuario invitado no puede tener ya Membership `ACTIVE` en esa organization -> 409
+  - el usuario invitado no puede tener Membership `ACTIVE` en esa organization -> 409 (`User already belongs to this organization`)
+  - el usuario invitado no puede tener Membership `SUSPENDED` en esa organization -> 409 (`User has a suspended membership in this organization; reactivate it instead of inviting again`): la reactivacion es administrativa (`POST .../members/:membershipId/reactivate`), no se hace por invitacion
+  - el usuario invitado **si** puede tener Membership `LEFT` (abandono voluntario con `POST /organizations/:organizationId/leave`): la invitacion se crea normalmente y, al aceptarla, esa Membership se reutiliza (`LEFT -> ACTIVE`, ver `POST /organization-invitations/:token/accept`)
   - no puede existir otra invitacion `PENDING` vigente para ese usuario en esa organization -> 409
 - Notas:
   - `token` se genera de forma criptograficamente segura
@@ -1138,12 +1228,20 @@ Aplica a `GET /organizations/:organizationId/invitations` y a `POST /organizatio
   - `expiresAt > now` -> 400
   - si la invitacion tiene `invitedUser`, debe ser el usuario autenticado -> 403
   - si es una invitacion antigua sin `invitedUser`, se valida por `email` y al aceptar se completa `invitedUser` con el usuario autenticado
-  - el usuario no debe tener Membership previo en esa organization -> 409
-- Resultado: en una transaccion crea Membership `ACTIVE` con el role de la invitacion y marca la invitacion como `ACCEPTED` con `acceptedAt`.
-- Contrato del 409 (verificado, sin cambios en esta fase):
+  - el usuario no debe tener Membership `ACTIVE` ni `SUSPENDED` en esa organization -> 409
+- Resultado (en una unica transaccion):
+  - sin Membership previa: crea Membership `ACTIVE` con el role de la invitacion (`joinedAt = now`).
+  - con Membership `LEFT` (el usuario abandono la organization con `POST /organizations/:organizationId/leave`): **reutiliza esa misma Membership** (mismo `membershipId`), que pasa a `ACTIVE` con el `role` de la nueva invitacion. Nunca se crea una segunda Membership para el mismo par usuario/organization (unique `user + organization`).
+  - en ambos casos marca la invitacion como `ACCEPTED` con `acceptedAt`.
+- Reingreso desde `LEFT`:
+  - el role anterior **no se conserva**: `DEVELOPER / LEFT` + invitacion `MEMBER` -> `MEMBER / ACTIVE`.
+  - `joinedAt` no se modifica: sigue siendo la primera incorporacion a la organization. No existe `leftAt`.
+  - el UPDATE `LEFT -> ACTIVE` es condicional sobre `status = LEFT` y ocurre en la misma transaccion que marca la invitacion `ACCEPTED`. Si otro request cambio la Membership en el medio (por ejemplo dos aceptaciones concurrentes), responde 409 (`Membership was modified concurrently, retry the operation`) y no queda ningun estado parcial: ni invitacion `ACCEPTED` con Membership `LEFT`, ni Membership `ACTIVE` con invitacion `PENDING`.
+  - la respuesta tiene la misma forma que en el alta: la Membership (`id`, `role`, `status`, `joinedAt`, `createdAt`, `updatedAt`) con `user` y `organization` reducidos a `{ "id" }`.
+- Contrato del 409:
   - mensaje: `User already belongs to this organization`
-  - la verificacion busca **cualquier** Membership del usuario en esa organization, sin filtrar por `status`; es decir, un Membership no `ACTIVE` tambien produce 409.
-  - `POST /organizations/:organizationId/invitations` usa el mismo mensaje pero solo considera Membership `ACTIVE`. La diferencia es intencional por ahora: aceptar no debe crear un segundo Membership para el mismo par usuario/organization.
+  - se produce cuando el usuario tiene Membership `ACTIVE` o `SUSPENDED` en esa organization. Un `SUSPENDED` no reingresa aceptando invitaciones: eso es reactivacion administrativa (`POST .../members/:membershipId/reactivate`).
+  - `POST /organizations/:organizationId/invitations` aplica la misma regla al crear (`ACTIVE` y `SUSPENDED` -> 409, `LEFT` permitido), asi que en el flujo normal este 409 solo aparece si el status cambio entre la creacion y la aceptacion.
   - la invitacion queda `PENDING` cuando la aceptacion falla con 409 (no se marca `ACCEPTED`); si corresponde, OWNER/ADMIN puede cancelarla con el endpoint de cancelacion.
 
 ### Push automaticas de eventos (Fase 8B)

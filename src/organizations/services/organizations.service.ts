@@ -10,6 +10,7 @@ import { Membership } from '../../memberships/entities/membership.entity';
 import { MembershipStatus } from '../../memberships/enums/membership-status.enum';
 import { OrganizationRole } from '../../memberships/enums/organization-role.enum';
 import { MembershipsService } from '../../memberships/services/memberships.service';
+import type { ManagedMembershipStatus } from '../../memberships/services/memberships.service';
 import { UserContextOrganizationResponse } from '../../me/dto/user-context.response';
 import { CreateOrganizationDto } from '../dto/create-organization.dto';
 import { Organization } from '../entities/organization.entity';
@@ -204,7 +205,7 @@ export class OrganizationsService {
 		organizationId: string,
 		membershipId: string,
 		user: User,
-		newStatus: MembershipStatus,
+		newStatus: ManagedMembershipStatus,
 	): Promise<OrganizationMemberResponse> {
 		const requesterMembership = await this.membershipsService.requireActiveMembership(
 			user.id,
@@ -218,5 +219,18 @@ export class OrganizationsService {
 			requesterMembership,
 			newStatus,
 		);
+	}
+
+	/**
+	 * Abandono voluntario de la organization (ACTIVE -> LEFT) por el propio usuario autenticado.
+	 * No pasa por `requireActiveMembership` ni por permisos de role: no es una accion
+	 * administrativa. Las reglas (sin Membership -> 403, SUSPENDED/LEFT -> 409, OWNER -> 409 y
+	 * update condicional) viven en MembershipsService.
+	 */
+	async leaveOrganization(
+		organizationId: string,
+		user: User,
+	): Promise<OrganizationMemberResponse> {
+		return this.membershipsService.leaveOrganization(user.id, organizationId);
 	}
 }
