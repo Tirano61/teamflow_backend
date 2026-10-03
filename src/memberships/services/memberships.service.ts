@@ -124,6 +124,20 @@ export class MembershipsService {
 		}
 	}
 
+	/**
+	 * Permiso para eliminar la organization (y para solicitar la verificacion de seguridad
+	 * `DELETE_ORGANIZATION`): solo OWNER ACTIVE. ADMIN, DEVELOPER y MEMBER no alcanzan.
+	 */
+	assertCanDeleteOrganization(membership: Membership): void {
+		if (membership.status !== MembershipStatus.ACTIVE) {
+			throw new ForbiddenException('Membership is not active');
+		}
+
+		if (membership.role !== OrganizationRole.OWNER) {
+			throw new ForbiddenException('Only OWNER can delete the organization');
+		}
+	}
+
 	assertCanInvite(membership: Membership): void {
 		this.assertActiveOwnerOrAdmin(membership, 'Only OWNER or ADMIN can create invitations');
 	}

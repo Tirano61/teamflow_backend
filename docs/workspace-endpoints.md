@@ -7,6 +7,7 @@ Autenticacion:
 - Usuario autenticado: requiere JWT Bearer valido.
 - Membership ACTIVE: ademas del JWT, requiere Membership `ACTIVE` del usuario autenticado en el `:organizationId` de la ruta.
 - Membership ACTIVE + OWNER/ADMIN: ademas de lo anterior, el role de esa Membership debe ser `OWNER` o `ADMIN`.
+- Membership ACTIVE + OWNER: el role de esa Membership debe ser `OWNER` (por ejemplo, verificacion de seguridad `DELETE_ORGANIZATION`). Ver "Security Verifications".
 - Membership ACTIVE + OWNER/ADMIN/DEVELOPER: role de gestion de Discussions (status, asignaciones y relaciones de contexto). Ver "Workspace: Discussions (reglas comunes)".
 
 Autorizacion tenant:
@@ -1198,6 +1199,178 @@ Aplica a `GET /organizations/:organizationId/invitations` y a `POST /organizatio
   - si usa el `organizationId` de A con un `invitationId` de B -> 404 (esa invitacion no existe dentro de A)
 - No se filtra existencia entre organizations: la respuesta 404 es identica a la de un `invitationId` inexistente.
 
+## Security Verifications (operaciones sensibles)
+
+Mecanismo reutilizable para confirmar operaciones sensibles con un codigo de 6 digitos enviado al email del usuario autenticado. Cada verificacion queda ligada a **usuario + organization + purpose**: un codigo pedido para eliminar la organization A no sirve para la organization B, ni para otro usuario, ni para otro purpose.
+
+Por ahora solo existe el purpose `DELETE_ORGANIZATION`. **La eliminacion de la organization todavia no existe**: estos endpoints solo dejan una autorizacion verificada que la futura operacion consumira (ver "Verificar vs consumir").
+
+### Purposes
+| Purpose               | Permiso para solicitar y verificar                       |
+| --------------------- | -------------------------------------------------------- |
+| `DELETE_ORGANIZATION` | Membership `ACTIVE` con role `OWNER` en `:organizationId` |
+
+Se usa siempre la Membership de la organization del path, nunca el rol global del `User`.
+
+### Estados
+| Status       | Significado                                                                                      | Abierta |
+| ------------ | ------------------------------------------------------------------------------------------------ | ------- |
+| `PENDING`    | codigo enviado por email, todavia no verificado                                                  | Si      |
+| `VERIFIED`   | codigo correcto; autorizacion disponible hasta `authorizationExpiresAt`, todavia no consumida     | Si      |
+| `CONSUMED`   | la operacion sensible uso la autorizacion (uso unico)                                            | No      |
+| `SUPERSEDED` | reemplazada por una solicitud mas reciente del mismo usuario + organization + purpose            | No      |
+| `EXPIRED`    | vencio sin completarse                                                                           | No      |
+| `LOCKED`     | se alcanzo el maximo de 5 codigos incorrectos                                                    | No      |
+
+- Como maximo existe **una verificacion abierta** (`PENDING`/`VERIFIED`) por usuario + organization + purpose, garantizado en base de datos por un indice unico parcial.
+- `EXPIRED` se marca de forma perezosa (al verificar o al pedir un codigo nuevo). Una fila `PENDING` con `expiresAt` vencido, o `VERIFIED` con `authorizationExpiresAt` vencido, ya se trata como invalida aunque todavia no tenga ese status.
+- Las verificaciones cerradas se conservan como historial tecnico. No hay proceso de limpieza periodica.
+
+### Reglas
+- Codigo: 6 digitos numericos generados con CSPRNG (`crypto.randomInt`), incluidos ceros a la izquierda.
+- Almacenamiento: solo se guarda un HMAC-SHA256 del codigo (clave `SECURITY_VERIFICATION_SECRET`) ligado al id de la verificacion, al usuario, a la organization y al purpose. El codigo nunca se guarda en texto plano, nunca se devuelve en una response y nunca se registra en logs. La comparacion es en tiempo constante.
+- Expiracion del codigo: 10 minutos desde la solicitud (`expiresAt`).
+- Expiracion de la autorizacion: 10 minutos desde la verificacion correcta (`authorizationExpiresAt`).
+- Intentos: maximo 5 codigos incorrectos por verificacion. El quinto incorrecto la deja `LOCKED` y ya no puede verificarse, ni siquiera con el codigo correcto. Hay que pedir un codigo nuevo.
+- Cooldown: 60 segundos entre solicitudes del mismo usuario + organization + purpose, cualquiera sea el status de la ultima (incluida una `LOCKED`).
+- Codigo nuevo: pedir un codigo nuevo invalida las verificaciones abiertas anteriores del mismo usuario + organization + purpose. Las vencidas pasan a `EXPIRED` y el resto a `SUPERSEDED`, **incluida una `VERIFIED` todavia no consumida**. Solo queda valido el codigo mas reciente.
+- Uso unico: una verificacion `VERIFIED` no puede volver a verificarse (409) y su autorizacion solo puede consumirse una vez.
+- Email: se envia exclusivamente al email del usuario autenticado, leido del backend. Ningun body acepta `email`, `userId` ni `organizationId`.
+
+### Verificar vs consumir
+Son tres momentos distintos, cada uno con su timestamp:
+1. Codigo solicitado: `createdAt`, status `PENDING`.
+2. Codigo verificado: `verifiedAt`, status `VERIFIED`. **Verificar no ejecuta ni consume nada.**
+3. Autorizacion consumida por la operacion sensible: `consumedAt`, status `CONSUMED`.
+
+El paso 3 no tiene endpoint propio: lo hara la operacion sensible (eliminar organization) cuando exista, dentro de su propia transaccion.
+
+### POST /organizations/:organizationId/security-verifications
+- Auth: Usuario autenticado
+- Permisos: depende del purpose. `DELETE_ORGANIZATION` -> Membership `ACTIVE` + `OWNER`.
+- Descripcion: Genera un codigo de 6 digitos y lo envia al email del usuario autenticado. Invalida las verificaciones abiertas anteriores del mismo usuario + organization + purpose.
+- Parametros:
+  - `organizationId` (path, UUID) -> si no es UUID, 400
+- Body:
+```json
+{
+  "purpose": "DELETE_ORGANIZATION"
+}
+```
+- No acepta `userId`, `email` ni `organizationId` en el body: cualquier propiedad extra responde 400.
+- Codigo de exito: `201` (comportamiento por defecto de Nest para POST en este proyecto).
+- Respuesta: metadata, nunca el codigo ni su hash.
+```json
+{
+  "verificationId": "3b2f6a0e-8f7d-4c1b-9a51-6f0d2c4e8a11",
+  "purpose": "DELETE_ORGANIZATION",
+  "expiresAt": "2026-10-03T15:10:00.000Z",
+  "resendAvailableAt": "2026-10-03T15:01:00.000Z"
+}
+```
+- `expiresAt`: vencimiento del codigo (10 minutos).
+- `resendAvailableAt`: a partir de cuando se puede pedir otro codigo (60 segundos).
+
+#### Orden de validacion
+1. JWT valido -> si no, 401.
+2. `organizationId` UUID y body valido (`purpose` del enum, sin propiedades extra) -> si no, 400.
+3. Membership del usuario en `organizationId` -> si no existe, 403 (`User does not belong to this organization`), sin revelar si la organization existe.
+4. Membership `ACTIVE` -> si esta `SUSPENDED` o `LEFT`, 403 (`Membership is not active`).
+5. Permiso del purpose (`DELETE_ORGANIZATION`: role `OWNER`) -> si no, 403 (`Only OWNER can delete the organization`).
+6. Cooldown de 60 segundos -> si no paso, 429.
+7. Cierra las verificaciones abiertas anteriores, crea la nueva (`PENDING`) y envia el email, todo en una transaccion. Si el envio falla, 503 y se hace rollback completo: no queda codigo nuevo, no corre el cooldown y las verificaciones anteriores siguen como estaban.
+
+- Errores:
+  - 400 `organizationId` no es UUID, `purpose` invalido o ausente, o propiedades no permitidas en el body (`userId`, `email`, `organizationId`, ...)
+  - 401 sin token valido
+  - 403 sin Membership en la organization, Membership `SUSPENDED`/`LEFT`, o role insuficiente para el purpose (`ADMIN`, `DEVELOPER` y `MEMBER` para `DELETE_ORGANIZATION`)
+  - 429 `A security verification was requested recently, try again in N seconds` (cooldown) o `A security verification was requested concurrently, try again later` (otra solicitud simultanea del mismo scope gano la carrera)
+  - 500 `Security verification is not configured` (falta `SECURITY_VERIFICATION_SECRET` en el servidor)
+  - 503 `Verification email could not be sent, try again later` (proveedor de email no configurado, caido o rechazo el envio)
+
+### POST /organizations/:organizationId/security-verifications/:verificationId/verify
+- Auth: Usuario autenticado
+- Permisos: Membership `ACTIVE` en `:organizationId` y el permiso del purpose **almacenado** en la verificacion (`DELETE_ORGANIZATION` -> `OWNER`). Ademas, la verificacion debe pertenecer al usuario autenticado.
+- Descripcion: Verifica el codigo recibido por email. Exito: `PENDING` -> `VERIFIED`. No consume la autorizacion ni ejecuta la operacion sensible.
+- Parametros:
+  - `organizationId` (path, UUID) -> si no es UUID, 400
+  - `verificationId` (path, UUID) -> si no es UUID, 400
+- Body:
+```json
+{
+  "code": "483921"
+}
+```
+- `code`: string de exactamente 6 digitos. No acepta `purpose`, `userId` ni `email`: cualquier propiedad extra responde 400.
+- Codigo de exito: `201` (comportamiento por defecto de Nest para POST en este proyecto).
+- Respuesta:
+```json
+{
+  "verificationId": "3b2f6a0e-8f7d-4c1b-9a51-6f0d2c4e8a11",
+  "purpose": "DELETE_ORGANIZATION",
+  "verifiedAt": "2026-10-03T15:02:30.000Z",
+  "authorizationExpiresAt": "2026-10-03T15:12:30.000Z"
+}
+```
+- `authorizationExpiresAt`: hasta cuando la operacion sensible puede consumir esta autorizacion (10 minutos desde la verificacion).
+- No devuelve el codigo, el hash ni los intentos restantes. Ver "Decision de status HTTP".
+
+#### Orden de validacion
+1. JWT valido -> si no, 401.
+2. `organizationId` y `verificationId` UUID, `code` de 6 digitos, sin propiedades extra -> si no, 400. Un body invalido no consume intentos.
+3. Membership `ACTIVE` en `organizationId` -> si no, 403.
+4. Verificacion buscada por `verificationId` + usuario autenticado + `organizationId` -> si no existe, 404.
+5. Permiso del purpose almacenado -> si no, 403.
+6. Status `PENDING` -> si no, 409 (`VERIFIED`, `CONSUMED`, `SUPERSEDED`, `EXPIRED`) o 429 (`LOCKED`).
+7. `expiresAt` vigente -> si vencio, pasa a `EXPIRED` y responde 409.
+8. Codigo -> si es incorrecto suma un intento fallido: 400 en los intentos 1 a 4; en el 5 pasa a `LOCKED` y responde 429.
+9. Codigo correcto -> `VERIFIED` con `verifiedAt` y `authorizationExpiresAt`.
+
+- Errores:
+  - 400 `organizationId`/`verificationId` no son UUID, `code` con formato invalido (`code must be a string of exactly 6 digits`), propiedades no permitidas en el body, o codigo incorrecto (`Invalid verification code`, intentos 1 a 4)
+  - 401 sin token valido
+  - 403 sin Membership en la organization, Membership `SUSPENDED`/`LEFT`, o role insuficiente para el purpose de la verificacion
+  - 404 `Security verification not found`: inexistente, de otro usuario o de otra organization
+  - 409 `Security verification has already been verified`
+  - 409 `Security verification has already been used` (`CONSUMED`)
+  - 409 `Security verification was replaced by a newer request` (`SUPERSEDED`)
+  - 409 `Security verification has expired, request a new code` (`EXPIRED` o `expiresAt` vencido)
+  - 429 `Invalid verification code. Maximum number of verification attempts reached, request a new code` (quinto codigo incorrecto)
+  - 429 `Maximum number of verification attempts reached, request a new code` (cualquier intento sobre una verificacion `LOCKED`)
+  - 500 `Security verification is not configured`
+
+### Decision de status HTTP
+- **400 codigo incorrecto**: es un input invalido para esa verificacion, igual que el resto de validaciones de dominio del proyecto. La verificacion sigue utilizable.
+- **409 verificada / consumida / reemplazada / vencida**: el problema es el estado del recurso, no el input. Mismo criterio que cancelar una invitacion que ya no esta `PENDING` o suspender un membership ya suspendido. Pedir un codigo nuevo es la salida.
+- **429 cooldown y limite de intentos**: ambos son limites de frecuencia/cantidad; reintentar igual no sirve hasta que pase el tiempo o se pida otro codigo. El quinto codigo incorrecto ya responde 429 (y no 400) para que el cliente sepa en ese mismo momento que la verificacion quedo bloqueada.
+- **No se devuelve `attemptsRemaining`**: el limite (5) es fijo y esta documentado; el cliente no necesita el contador para la UX (400 -> reintentar, 429 -> pedir codigo nuevo) y el filtro global de errores solo expone `statusCode`, `error`, `message`, `timestamp` y `path`. Se mantiene el contrato simple.
+- **503 email**: el codigo no pudo entregarse y no se creo ninguna verificacion; el cliente puede reintentar de inmediato.
+
+### Proteccion tenant / anti-IDOR
+- La organization sale exclusivamente de `:organizationId` y el usuario exclusivamente del JWT.
+- La verificacion **nunca** se busca solo por `verificationId`: la consulta siempre incluye `user_id = usuario autenticado` y `organization_id = :organizationId`.
+- Una verificacion de otro usuario (aunque sea de la misma organization) o de otra organization (aunque sea del mismo usuario) responde el mismo 404 que una inexistente. No se revela su existencia, status ni purpose.
+- Un usuario sin Membership `ACTIVE` en `:organizationId` recibe 403 antes de cualquier busqueda.
+- El permiso se evalua sobre el `purpose` guardado en la verificacion, nunca sobre uno enviado por el cliente.
+
+### Concurrencia
+- **Dos solicitudes de codigo simultaneas** (mismo usuario + organization + purpose): ambas pueden pasar el chequeo de cooldown, pero el indice unico parcial `uq_security_verifications_open_scope` (como maximo una `PENDING`/`VERIFIED` por scope) hace fallar el INSERT de la segunda, que hace rollback completo (no envia email) y responde 429. Nunca quedan dos verificaciones validas.
+- **Dos verificaciones simultaneas del mismo codigo**: cada intento bloquea la fila (`SELECT ... FOR UPDATE`) dentro de una transaccion. El primero la pasa a `VERIFIED`; el segundo ve `VERIFIED` y recibe 409.
+- **Intento correcto concurrente con intentos incorrectos**: los intentos se serializan con el mismo lock, asi que cada uno ve los fallos ya registrados. No es posible evaluar mas de 5 codigos incorrectos enviando requests en paralelo; si el quinto incorrecto se registra antes, el correcto recibe 429.
+- **Codigo nuevo mientras se verifica el anterior**: ambas operaciones toman lock sobre la fila anterior. Si la verificacion llega primero, la nueva solicitud igualmente invalida esa autorizacion `VERIFIED` (`SUPERSEDED`); si la solicitud llega primero, la verificacion del codigo anterior recibe 409 (`replaced by a newer request`).
+- **Consumo** (uso interno, futura eliminacion): UPDATE condicional `VERIFIED -> CONSUMED` con `authorizationExpiresAt` vigente; de dos consumos concurrentes solo uno lo logra.
+
+### Email
+- Proveedor: Brevo (API HTTP transaccional). Variables de entorno: `BREVO_API_KEY`, `MAIL_FROM_EMAIL` (remitente verificado en Brevo) y `MAIL_FROM_NAME` (opcional, por defecto `TeamFlow`). El HMAC del codigo usa `SECURITY_VERIFICATION_SECRET`.
+- Destinatario: siempre el email del usuario autenticado.
+- Contenido: que se solicito una operacion sensible en TeamFlow, la operacion y el nombre de la organization, el codigo de 6 digitos, que vence en 10 minutos y que, si el usuario no inicio la operacion, puede ignorar el mensaje. El codigo no va en el asunto.
+
+### Pruebas con Postman
+Postman no conoce el codigo enviado por email y no existe ningun endpoint ni flag que lo devuelva. Los casos que lo necesitan son manuales (ver la descripcion de la carpeta "Security Verifications" de la coleccion):
+- Verificacion correcta y segundo verify: pedir el codigo, copiarlo del email del OWNER en la variable `securityVerificationCode` y ejecutar esos requests. El email del OWNER (`email`) debe ser una casilla real.
+- Codigo vencido: ejecutar el request correspondiente 10 minutos despues de pedir el codigo.
+Sin `securityVerificationCode` o antes del vencimiento, esos requests saltean sus asserts.
+
 ## Organization Invitations
 
 ### GET /organization-invitations/me
@@ -1454,6 +1627,8 @@ Unicidad: `(organizationId, normalizedName)`. `normalizedName` es el `name` reco
 - messageId: UUID valido de discussion_messages de esa discussion (se captura en Postman al crear el mensaje)
 - developerUserId: UUID de un user con Membership ACTIVE asignable en esa organization (role OWNER, ADMIN o DEVELOPER)
 - deviceToken: FCM registration token valido de Android
+- securityVerificationId: UUID de una security verification del usuario autenticado en esa organization (se captura en Postman al solicitar el codigo)
+- securityVerificationCode: codigo de 6 digitos recibido por email; se completa a mano (Postman nunca lo recibe del backend)
 
 ## Read State / Unread
 

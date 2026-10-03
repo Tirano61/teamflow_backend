@@ -10,6 +10,7 @@ import { WorkspaceModule } from './workspace/workspace.module';
 import { FirebaseModule } from './firebase/firebase.module';
 import { MeModule } from './me/me.module';
 import { UsersModule } from './users/users.module';
+import { SecurityVerificationsModule } from './security_verifications/security-verifications.module';
 
 @Module({
 	imports: [
@@ -47,6 +48,7 @@ import { UsersModule } from './users/users.module';
 		OrganizationsModule,
 		MeModule,
 		UsersModule,
+		SecurityVerificationsModule,
 		WorkspaceModule,
 	],
 	controllers: [AppController],
