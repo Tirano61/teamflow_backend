@@ -1,7 +1,10 @@
 import {
 	Body,
 	Controller,
+	Delete,
 	Get,
+	HttpCode,
+	HttpStatus,
 	Param,
 	ParseUUIDPipe,
 	Patch,
@@ -14,6 +17,7 @@ import { UpdateMembershipRoleDto } from '../memberships/dto/update-membership-ro
 import { OrganizationInvitationsService } from '../organization_invitations/services/organization-invitations.service';
 import { CreateOrganizationInvitationDto } from '../organization_invitations/dto/create-organization-invitation.dto';
 import { CreateOrganizationDto } from './dto/create-organization.dto';
+import { OrganizationDeletionService } from './services/organization-deletion.service';
 import { OrganizationsService } from './services/organizations.service';
 
 @Auth()
@@ -21,6 +25,7 @@ import { OrganizationsService } from './services/organizations.service';
 export class OrganizationsController {
 	constructor(
 		private readonly organizationsService: OrganizationsService,
+		private readonly organizationDeletionService: OrganizationDeletionService,
 		private readonly invitationsService: OrganizationInvitationsService,
 	) {}
 
@@ -40,6 +45,18 @@ export class OrganizationsController {
 		@GetUser() user: User,
 	) {
 		return this.organizationsService.getOrganizationBasicForUser(organizationId, user);
+	}
+
+	/// Eliminacion definitiva e irreversible. Solo OWNER ACTIVE con una SecurityVerification
+	/// `DELETE_ORGANIZATION` ya verificada, que se busca por usuario del JWT + organization del
+	/// path: no recibe body, userId, verificationId ni codigo. 204 sin contenido.
+	@Delete(':organizationId')
+	@HttpCode(HttpStatus.NO_CONTENT)
+	deleteOrganization(
+		@Param('organizationId', new ParseUUIDPipe()) organizationId: string,
+		@GetUser() user: User,
+	): Promise<void> {
+		return this.organizationDeletionService.deleteOrganization(organizationId, user);
 	}
 
 	/// Directorio general: cualquier Membership ACTIVE, solo memberships ACTIVE.

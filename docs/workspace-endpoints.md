@@ -7,7 +7,7 @@ Autenticacion:
 - Usuario autenticado: requiere JWT Bearer valido.
 - Membership ACTIVE: ademas del JWT, requiere Membership `ACTIVE` del usuario autenticado en el `:organizationId` de la ruta.
 - Membership ACTIVE + OWNER/ADMIN: ademas de lo anterior, el role de esa Membership debe ser `OWNER` o `ADMIN`.
-- Membership ACTIVE + OWNER: el role de esa Membership debe ser `OWNER` (por ejemplo, verificacion de seguridad `DELETE_ORGANIZATION`). Ver "Security Verifications".
+- Membership ACTIVE + OWNER: el role de esa Membership debe ser `OWNER` (por ejemplo, verificacion de seguridad `DELETE_ORGANIZATION` y `DELETE /organizations/:organizationId`). Ver "Security Verifications".
 - Membership ACTIVE + OWNER/ADMIN/DEVELOPER: role de gestion de Discussions (status, asignaciones y relaciones de contexto). Ver "Workspace: Discussions (reglas comunes)".
 
 Autorizacion tenant:
@@ -78,7 +78,7 @@ Autorizacion tenant:
 - Descripcion: Retorna contexto de onboarding del usuario autenticado para decidir flujo post-login.
 - Incluye:
   - `user`: id, email, fullName
-  - `organizations`: solo memberships `ACTIVE` con id, name, slug, role, joinedAt. Las memberships `SUSPENDED` y `LEFT` (abandono voluntario) no aparecen: una organization que el usuario abandono deja de poder seleccionarse como organization activa hasta que acepte una nueva invitacion.
+  - `organizations`: solo memberships `ACTIVE` con id, name, slug, role, joinedAt. Las memberships `SUSPENDED` y `LEFT` (abandono voluntario) no aparecen: una organization que el usuario abandono deja de poder seleccionarse como organization activa hasta que acepte una nueva invitacion. Una organization eliminada (`DELETE /organizations/:organizationId`) desaparece para todos sus ex-miembros, junto con sus invitaciones pendientes.
   - `pendingInvitations`: solo invitaciones pendientes validas dirigidas al usuario autenticado (`invitedUser`)
   - `organizationCount`: cantidad de organizaciones activas
 - Notas:
@@ -1199,11 +1199,134 @@ Aplica a `GET /organizations/:organizationId/invitations` y a `POST /organizatio
   - si usa el `organizationId` de A con un `invitationId` de B -> 404 (esa invitacion no existe dentro de A)
 - No se filtra existencia entre organizations: la respuesta 404 es identica a la de un `invitationId` inexistente.
 
+### DELETE /organizations/:organizationId
+- Auth: Usuario autenticado
+- Permisos: Membership `ACTIVE` con role `OWNER` en `:organizationId` **y** una SecurityVerification `DELETE_ORGANIZATION` ya verificada (ver "Security Verifications"). `ADMIN`, `DEVELOPER` y `MEMBER` no pueden eliminar. Nunca se usa el rol global del `User`.
+- Descripcion: Elimina **definitivamente** la organization y todos los datos que le pertenecen. **Es irreversible**: no hay soft-delete, papelera ni restauracion. Los usuarios (cuentas globales) nunca se eliminan.
+- Parametros:
+  - `organizationId` (path, UUID) -> si no es UUID, 400
+- Body: no lleva body y no se lee. No recibe `userId`, `ownerId`, `verificationId`, `code`, `email` ni `organizationId`: el usuario sale del JWT, la organization del path y la autorizacion se busca internamente por usuario + organization + purpose `DELETE_ORGANIZATION`. El codigo no se vuelve a enviar.
+- Codigo de exito: `204 No Content`, sin body. Es el primer endpoint del proyecto que responde 204: el recurso dejo de existir y no hay nada que devolver (los `DELETE` existentes eliminan relaciones o mensajes y devuelven un JSON de confirmacion; este no devuelve la organization eliminada).
+
+#### Flujo completo
+1. `POST /organizations/:organizationId/security-verifications` con `{ "purpose": "DELETE_ORGANIZATION" }` -> el codigo llega al email del OWNER.
+2. `POST /organizations/:organizationId/security-verifications/:verificationId/verify` con el codigo -> `VERIFIED`, valida 10 minutos (`authorizationExpiresAt`).
+3. `DELETE /organizations/:organizationId` dentro de esos 10 minutos -> 204. La autorizacion se consume (uso unico).
+
+#### Orden de validacion
+1. JWT valido -> si no, 401.
+2. `organizationId` UUID -> si no, 400.
+3. Membership del usuario en `organizationId` -> si no existe, 403 (`User does not belong to this organization`). Mismo 403 para una organization inexistente, una organization ajena o una ya eliminada.
+4. Membership `ACTIVE` -> si esta `SUSPENDED` o `LEFT`, 403 (`Membership is not active`).
+5. Role `OWNER` -> si no, 403 (`Only OWNER can delete the organization`).
+6. Transaccion:
+   1. Bloquea la fila de la organization (`SELECT ... FOR UPDATE`). Si otro DELETE concurrente ya la elimino, 403 (`User does not belong to this organization`, igual que un segundo DELETE).
+   2. Consume la autorizacion con `SecurityVerificationsService.consumeAuthorization(..., manager)`: UPDATE condicional `VERIFIED -> CONSUMED` sobre usuario + organization + `DELETE_ORGANIZATION` con `authorizationExpiresAt > now`. Si no hay una autorizacion utilizable, 403 (`A verified DELETE_ORGANIZATION security verification is required`) y no se borra nada.
+   3. Bloquea las discussions de la organization (`FOR UPDATE`) y lee los adjuntos de Cloudinary de sus mensajes.
+   4. Borra los datos en orden (ver abajo) y por ultimo la organization.
+   5. Commit.
+7. Despues del commit: limpieza de adjuntos en Cloudinary (ver "Almacenamiento externo").
+
+#### SecurityVerification requerida
+- Tiene que existir una verificacion del usuario autenticado, para esa organization, purpose `DELETE_ORGANIZATION`, status `VERIFIED`, con `authorizationExpiresAt` vigente. Una `VERIFIED` no esta consumida ni invalidada por definicion (esos son otros status).
+- Se rechaza con 403 (`A verified DELETE_ORGANIZATION security verification is required`) cuando:
+  - nunca se pidio un codigo;
+  - el codigo se pidio pero no se verifico (`PENDING`);
+  - la autorizacion vencio (`authorizationExpiresAt` pasado), aunque todavia figure `VERIFIED`;
+  - fue reemplazada por un codigo nuevo (`SUPERSEDED`), bloqueada (`LOCKED`) o ya consumida (`CONSUMED`);
+  - la verificacion es de otra organization (aunque el usuario tambien sea OWNER alli) o de otro usuario.
+- Decision de status: 403 y no 409 porque el OWNER esta autenticado pero todavia no autorizado para esta operacion; la autorizacion reforzada es parte de la autorizacion, no un conflicto con el estado de la organization. Se distingue del 403 de role por el mensaje. La salida es pedir y verificar un codigo nuevo.
+- Se consume **dentro** de la transaccion del borrado, nunca antes: si el borrado falla y hay rollback, la verificacion vuelve a quedar `VERIFIED` y puede reintentarse mientras siga vigente.
+
+#### Datos eliminados (tenant-owned)
+Orden real de borrado, hijos antes que padres segun las FKs. Todos los pasos estan scoped por la organization (directo por `organization_id` o via sus discussions/catalogos):
+
+| # | Tabla | Que es |
+| - | ----- | ------ |
+| 1 | `discussion_messages` | mensajes de las discussions (texto y adjuntos) |
+| 2 | `discussion_read_states` | estado leido/no leido por usuario |
+| 3 | `discussion_assignments` | asignaciones discussion <-> usuario (se borra el vinculo, nunca el usuario) |
+| 4 | `discussion_work_modules` | contexto discussion <-> WorkModule |
+| 5 | `discussion_components` | contexto discussion <-> Component |
+| 6 | `discussion_tags` | contexto discussion <-> Tag |
+| 7 | `discussions` | discussions |
+| 8 | `work_module_components` | relacion WorkModule <-> Component |
+| 9 | `work_modules` | WorkModules |
+| 10 | `components` | Components |
+| 11 | `tags` | Tags |
+| 12 | `organization_invitations` | todas las invitaciones, cualquier status (`PENDING`, `ACCEPTED`, `EXPIRED`, `CANCELLED`) |
+| 13 | `memberships` | todas las memberships, cualquier role (`OWNER`, `ADMIN`, `DEVELOPER`, `MEMBER`) y status (`ACTIVE`, `SUSPENDED`, `LEFT`) |
+| 14 | `security_verifications` | todas las verificaciones de la organization, incluida la recien consumida |
+| 15 | `organizations` | la organization |
+
+- Las tablas intermedias de contexto (4-6 y 8) se limpian tanto por el lado de la discussion/WorkModule como por el del catalogo: su FK hacia `work_modules`, `components` y `tags` es `NO ACTION` y un vinculo que apuntara a un catalogo de esta organization bloquearia el borrado.
+- Las FKs `ON DELETE CASCADE` existentes hacia `organizations` y `discussions` no se modificaron; quedan como red de seguridad, pero el borrado no depende de ellas.
+- Las tablas legacy `discussion_applications` y `discussion_indicators` (sin entidad, de la terminologia anterior) caen por su `ON DELETE CASCADE` hacia `discussions`.
+
+#### Datos globales conservados
+- `users`: nunca se ejecuta un DELETE sobre usuarios, aunque solo pertenecieran a esta organization. Siguen pudiendo iniciar sesion y conservan sus memberships e invitaciones de otras organizations.
+- `user_devices` (tokens FCM): pertenecen al usuario, no a la organization.
+- Memberships, invitations, verificaciones y datos de Workspace de **otras** organizations, incluidas las de los mismos usuarios.
+- Las tablas legacy `applications` / `indicators` (y `application_indicators`) no tienen `organization_id`: no son atribuibles a ninguna organization y no se tocan.
+
+#### Almacenamiento externo (Cloudinary)
+- Los adjuntos de mensajes se suben a Cloudinary y el mensaje guarda `cloudinary_public_id`. El `resource_type` no se persiste: se deduce del `type` del mensaje (mismo mapeo que `DELETE .../messages/:messageId`). Nunca se deduce nada desde `file_url`.
+- Un borrado externo no puede deshacerse con un rollback, por eso:
+  1. dentro de la transaccion se leen `publicId` y `resource_type` de los adjuntos (con las discussions bloqueadas: ningun adjunto subido en paralelo queda afuera);
+  2. se borran los datos y se hace commit;
+  3. **despues del commit** se borran los assets en Cloudinary, de a 5 en paralelo, sin demorar la response.
+- Si la limpieza falla (Cloudinary caido, no configurado o respuesta distinta de `ok` / `not found`), la organization **ya esta eliminada** y la response sigue siendo 204: no se intenta reconstruir nada. Cada asset no borrado queda registrado en el log del servidor como `Orphaned Cloudinary asset after organization deletion` con `organizationId`, `messageId`, `publicId` y `resourceType`, mas un resumen con la cantidad de fallos. Ese log es el unico registro del asset huerfano (la fila del mensaje ya no existe); la limpieza se reintenta manualmente desde Cloudinary con esos datos. No hay reintento automatico.
+
+#### Proteccion tenant / anti-IDOR
+| Caso | Respuesta |
+| ---- | --------- |
+| organization inexistente | 403 `User does not belong to this organization` |
+| organization existente, usuario sin Membership | 403 `User does not belong to this organization` |
+| organization ya eliminada (segundo DELETE) | 403 `User does not belong to this organization` |
+| Membership `SUSPENDED` o `LEFT` | 403 `Membership is not active` |
+| `MEMBER`, `DEVELOPER` o `ADMIN` | 403 `Only OWNER can delete the organization` |
+| `OWNER` sin autorizacion utilizable | 403 `A verified DELETE_ORGANIZATION security verification is required` |
+| `OWNER` con autorizacion `VERIFIED` vigente | 204 |
+
+- Inexistente, ajena y ya eliminada responden exactamente lo mismo: el endpoint no permite descubrir si una organization existe. Se eligio 403 (y no 404) porque es la respuesta de todos los recursos tenant del proyecto para "sin Membership"; responder 404 solo cuando no existe revelaria la existencia de las organizations ajenas.
+- La organization sale exclusivamente del path, el usuario del JWT y la autorizacion se busca por ambos: una verificacion de otra organization o de otro usuario nunca sirve.
+
+#### Segundo DELETE
+- No finge exito: la organization y la Membership del OWNER ya no existen, asi que responde 403 `User does not belong to this organization`, igual que para cualquier organization a la que el usuario no pertenece.
+
+#### Concurrencia
+- **Dos DELETE simultaneos**: el primero bloquea la organization (`FOR UPDATE`); el segundo espera, y al obtener el lock la fila ya no existe -> 403. Ademas la autorizacion se consume con un UPDATE condicional: aunque ambos llegaran a consumir, solo uno obtiene la fila.
+- **Dos consumos de la misma verificacion**: UPDATE condicional `VERIFIED -> CONSUMED`; solo uno afecta la fila, el otro recibe 403. Uso unico garantizado.
+- **DELETE mientras se crea una discussion, una invitacion, un catalogo, una membership (aceptar invitacion) o se pide un codigo**: todo INSERT que referencia la organization toma un lock de clave sobre su fila, incompatible con el `FOR UPDATE`. Si el INSERT llego antes, el DELETE espera su commit y luego tambien borra lo creado; si llego despues, espera al DELETE y falla por FK (la organization ya no existe) con error del servidor, sin dejar datos parciales.
+- **DELETE mientras se postea un mensaje, un adjunto, un read state o una asignacion**: las discussions quedan bloqueadas antes de leer los adjuntos; esos INSERT esperan y luego fallan por FK. Un adjunto subido a Cloudinary por un mensaje que falla se borra en el flujo de subida existente.
+- **DELETE mientras se modifica una Membership** (cambio de role, suspend/reactivate, leave): el UPDATE y el DELETE se serializan por el lock de fila; si el DELETE gana, el UPDATE condicional afecta 0 filas y responde 409 como hoy.
+- **DELETE mientras se acepta una invitacion**: la aceptacion inserta/actualiza la Membership en su transaccion. Si confirma antes, el DELETE borra esa Membership e invitacion; si el DELETE confirma antes, la aceptacion falla y luego el token responde 404 (`Invitation not found`).
+- Si Postgres detecta un deadlock, la transaccion hace rollback completo (la verificacion sigue `VERIFIED`) y responde 409 `Organization was modified concurrently, retry the operation`.
+
+#### Efecto sobre otros endpoints
+- `GET /me/context` y `GET /organizations/me`: la organization deja de aparecer para todos sus ex-miembros porque sus memberships ya no existen. No cambio el contrato.
+- `GET /organization-invitations/me` y `pendingInvitations` de `/me/context`: las invitaciones `PENDING` a la organization eliminada desaparecen (se borraron). Su token responde 404 en `POST /organization-invitations/:token/accept`.
+- Toda ruta `/organizations/:organizationId/...` de la organization eliminada responde 403 (sin Membership).
+- El JWT no se revoca: sigue siendo valido para las demas organizations del usuario.
+
+#### Auditoria
+- La SecurityVerification consumida se elimina junto con la organization (paso 14), asi que no queda en base ningun registro de quien elimino la organization ni cuando. Como rastro minimo, el servidor registra en su log `Organization deleted organizationId=... deletedBy=<userId>` con la cantidad de filas borradas por tabla. Un historial/auditoria persistente queda fuera de alcance (deuda tecnica).
+
+- Errores:
+  - 400 `organizationId` no es UUID
+  - 401 sin token valido
+  - 403 `User does not belong to this organization` (sin Membership, organization inexistente o ya eliminada)
+  - 403 `Membership is not active` (Membership `SUSPENDED` o `LEFT`)
+  - 403 `Only OWNER can delete the organization` (`ADMIN`, `DEVELOPER`, `MEMBER`)
+  - 403 `A verified DELETE_ORGANIZATION security verification is required` (sin verificacion, `PENDING`, vencida, reemplazada, bloqueada, consumida o de otra organization)
+  - 409 `Organization was modified concurrently, retry the operation` (deadlock detectado; no se borro nada)
+- Fuera de alcance: transferencia de OWNER, soft-delete, restauracion/papelera, auditoria persistente, eliminacion de usuarios o de la cuenta, reintento automatico de la limpieza de Cloudinary.
+
 ## Security Verifications (operaciones sensibles)
 
 Mecanismo reutilizable para confirmar operaciones sensibles con un codigo de 6 digitos enviado al email del usuario autenticado. Cada verificacion queda ligada a **usuario + organization + purpose**: un codigo pedido para eliminar la organization A no sirve para la organization B, ni para otro usuario, ni para otro purpose.
 
-Por ahora solo existe el purpose `DELETE_ORGANIZATION`. **La eliminacion de la organization todavia no existe**: estos endpoints solo dejan una autorizacion verificada que la futura operacion consumira (ver "Verificar vs consumir").
+Por ahora solo existe el purpose `DELETE_ORGANIZATION`. Estos endpoints solo dejan una autorizacion verificada; la operacion que la consume es `DELETE /organizations/:organizationId` (ver "Verificar vs consumir").
 
 ### Purposes
 | Purpose               | Permiso para solicitar y verificar                       |
@@ -1224,7 +1347,7 @@ Se usa siempre la Membership de la organization del path, nunca el rol global de
 
 - Como maximo existe **una verificacion abierta** (`PENDING`/`VERIFIED`) por usuario + organization + purpose, garantizado en base de datos por un indice unico parcial.
 - `EXPIRED` se marca de forma perezosa (al verificar o al pedir un codigo nuevo). Una fila `PENDING` con `expiresAt` vencido, o `VERIFIED` con `authorizationExpiresAt` vencido, ya se trata como invalida aunque todavia no tenga ese status.
-- Las verificaciones cerradas se conservan como historial tecnico. No hay proceso de limpieza periodica.
+- Las verificaciones cerradas se conservan como historial tecnico. No hay proceso de limpieza periodica. Excepcion: al eliminar la organization se eliminan todas sus verificaciones, incluida la consumida por esa eliminacion.
 
 ### Reglas
 - Codigo: 6 digitos numericos generados con CSPRNG (`crypto.randomInt`), incluidos ceros a la izquierda.
@@ -1243,7 +1366,7 @@ Son tres momentos distintos, cada uno con su timestamp:
 2. Codigo verificado: `verifiedAt`, status `VERIFIED`. **Verificar no ejecuta ni consume nada.**
 3. Autorizacion consumida por la operacion sensible: `consumedAt`, status `CONSUMED`.
 
-El paso 3 no tiene endpoint propio: lo hara la operacion sensible (eliminar organization) cuando exista, dentro de su propia transaccion.
+El paso 3 no tiene endpoint propio: lo hace la operacion sensible dentro de su propia transaccion. Para `DELETE_ORGANIZATION` es `DELETE /organizations/:organizationId`, que consume la autorizacion en la misma transaccion que borra los datos (si hay rollback, vuelve a quedar `VERIFIED`).
 
 ### POST /organizations/:organizationId/security-verifications
 - Auth: Usuario autenticado
@@ -1358,7 +1481,7 @@ El paso 3 no tiene endpoint propio: lo hara la operacion sensible (eliminar orga
 - **Dos verificaciones simultaneas del mismo codigo**: cada intento bloquea la fila (`SELECT ... FOR UPDATE`) dentro de una transaccion. El primero la pasa a `VERIFIED`; el segundo ve `VERIFIED` y recibe 409.
 - **Intento correcto concurrente con intentos incorrectos**: los intentos se serializan con el mismo lock, asi que cada uno ve los fallos ya registrados. No es posible evaluar mas de 5 codigos incorrectos enviando requests en paralelo; si el quinto incorrecto se registra antes, el correcto recibe 429.
 - **Codigo nuevo mientras se verifica el anterior**: ambas operaciones toman lock sobre la fila anterior. Si la verificacion llega primero, la nueva solicitud igualmente invalida esa autorizacion `VERIFIED` (`SUPERSEDED`); si la solicitud llega primero, la verificacion del codigo anterior recibe 409 (`replaced by a newer request`).
-- **Consumo** (uso interno, futura eliminacion): UPDATE condicional `VERIFIED -> CONSUMED` con `authorizationExpiresAt` vigente; de dos consumos concurrentes solo uno lo logra.
+- **Consumo** (uso interno de `DELETE /organizations/:organizationId`): UPDATE condicional `VERIFIED -> CONSUMED` con `authorizationExpiresAt` vigente; de dos consumos concurrentes solo uno lo logra.
 
 ### Email
 - Proveedor: Brevo (API HTTP transaccional). Variables de entorno: `BREVO_API_KEY`, `MAIL_FROM_EMAIL` (remitente verificado en Brevo) y `MAIL_FROM_NAME` (opcional, por defecto `TeamFlow`). El HMAC del codigo usa `SECURITY_VERIFICATION_SECRET`.
@@ -1370,6 +1493,8 @@ Postman no conoce el codigo enviado por email y no existe ningun endpoint ni fla
 - Verificacion correcta y segundo verify: pedir el codigo, copiarlo del email del OWNER en la variable `securityVerificationCode` y ejecutar esos requests. El email del OWNER (`email`) debe ser una casilla real.
 - Codigo vencido: ejecutar el request correspondiente 10 minutos despues de pedir el codigo.
 Sin `securityVerificationCode` o antes del vencimiento, esos requests saltean sus asserts.
+
+El flujo completo de eliminacion esta en la carpeta "Organization Deletion" de la coleccion. Trabaja **solo** sobre una organization temporal creada por la propia carpeta (`deleteOrganizationId`); nunca elimina `organizationId` ni `otherOrganizationId`. Su codigo se copia en `deleteSecurityVerificationCode`.
 
 ## Organization Invitations
 
