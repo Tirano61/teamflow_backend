@@ -2,7 +2,7 @@
 	"info": {
 		"name": "TeamFlow Backend - Endpoints",
 		"_postman_id": "f0f9a3a3-8c7a-4c61-9c15-1e22f8f0d123",
-		"description": "Coleccion de endpoints actuales de TeamFlow: Auth, Users, Workspace, Organizations y Organization Invitations (invitaciones internas por userId).",
+		"description": "Coleccion de endpoints actuales de TeamFlow: Auth, Users, Workspace, Organizations, Organization Invitations (invitaciones internas por userId) y Security Verifications (codigos por email para operaciones sensibles).",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"variable": [
@@ -168,6 +168,30 @@
 		},
 		{
 			"key": "otherComponentId",
+			"value": ""
+		},
+		{
+			"key": "securityVerificationId",
+			"value": ""
+		},
+		{
+			"key": "previousSecurityVerificationId",
+			"value": ""
+		},
+		{
+			"key": "otherSecurityVerificationId",
+			"value": ""
+		},
+		{
+			"key": "securityVerificationCode",
+			"value": ""
+		},
+		{
+			"key": "securityVerificationExpiresAt",
+			"value": ""
+		},
+		{
+			"key": "securityVerificationResendAvailableAt",
 			"value": ""
 		}
 	],
@@ -5519,6 +5543,1687 @@
 				}
 			],
 			"description": "Abandono voluntario de la organization (POST /organizations/:organizationId/leave, ACTIVE -> LEFT) y reingreso mediante una nueva invitacion (LEFT -> ACTIVE con el role de la nueva invitacion, reutilizando la misma Membership). Cubre OWNER protegido (409), SUSPENDED y LEFT repetido (409), perdida de acceso tenant, exclusion de /me/context, directorio y administracion, y las reglas de reinvitacion (ACTIVE y SUSPENDED -> 409, LEFT permitido). Depende de las variables de las carpetas Auth, Organizations y Organization Member Suspension: organizationId, otherOrganizationId, token (OWNER), invitedUserToken/invitedUserId (MEMBER) y adminUserToken/adminUserId (ADMIN). Deja la organization en el mismo estado en que la encuentra."
+		},
+		{
+			"name": "Security Verifications",
+			"item": [
+				{
+					"name": "Request code without token (expect 401)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 401', function () {",
+									"  pm.response.to.have.status(401);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"purpose\": \"DELETE_ORGANIZATION\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications"
+					},
+					"description": "El endpoint exige JWT: sin token responde 401."
+				},
+				{
+					"name": "Request code with invalid purpose (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 400', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"purpose must be one of the following values\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"purpose\": \"DELETE_EVERYTHING\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications"
+					},
+					"description": "purpose debe pertenecer al enum (por ahora solo DELETE_ORGANIZATION). Se valida antes de cualquier regla de negocio."
+				},
+				{
+					"name": "Request code with email in body (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 400', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"property email should not exist\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"purpose\": \"DELETE_ORGANIZATION\",\n  \"email\": \"attacker@example.com\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications"
+					},
+					"description": "El cliente nunca decide a que direccion se envia el codigo: email, userId y organizationId en el body responden 400 (forbidNonWhitelisted). El destinatario es siempre el email del usuario del JWT."
+				},
+				{
+					"name": "Request code with non-UUID organizationId (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 400', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"purpose\": \"DELETE_ORGANIZATION\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/not-a-uuid/security-verifications"
+					},
+					"description": "ParseUUIDPipe: organizationId invalido responde 400."
+				},
+				{
+					"name": "ADMIN requests DELETE_ORGANIZATION code (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Only OWNER can delete the organization\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"purpose\": \"DELETE_ORGANIZATION\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications"
+					},
+					"description": "DELETE_ORGANIZATION exige Membership ACTIVE con role OWNER. ADMIN no alcanza."
+				},
+				{
+					"name": "MEMBER requests DELETE_ORGANIZATION code (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Only OWNER can delete the organization\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"purpose\": \"DELETE_ORGANIZATION\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications"
+					},
+					"description": "El usuario invitado es MEMBER ACTIVE en organizationId (estado que deja la carpeta Organization Leave): 403."
+				},
+				{
+					"name": "Request code in an organization without membership (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"User does not belong to this organization\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"purpose\": \"DELETE_ORGANIZATION\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}/security-verifications"
+					},
+					"description": "Aislamiento tenant: el usuario admin no tiene Membership en otherOrganizationId. 403 sin revelar si la organization existe."
+				},
+				{
+					"name": "OWNER suspends the ADMIN (setup SUSPENDED)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{adminMembershipId}}/suspend"
+					},
+					"description": "Setup: deja al ADMIN con Membership SUSPENDED para probar que una Membership no ACTIVE no puede solicitar verificaciones. Usa adminMembershipId capturado en la carpeta Organization Leave."
+				},
+				{
+					"name": "Suspended ADMIN cannot request a code (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 403', function () {",
+									"  pm.expect(data.statusCode).to.eql(403);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Membership is not active\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"purpose\": \"DELETE_ORGANIZATION\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications"
+					},
+					"description": "Una Membership SUSPENDED (o LEFT) no puede solicitar verificaciones: 403 antes de evaluar el role."
+				},
+				{
+					"name": "OWNER reactivates the ADMIN (restaura estado)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/members/{{adminMembershipId}}/reactivate"
+					},
+					"description": "Restaura al ADMIN como ACTIVE."
+				},
+				{
+					"name": "OWNER requests DELETE_ORGANIZATION code",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (pm.response.code === 503) {",
+									"  console.warn('503: el backend no pudo enviar el email. Revisar BREVO_API_KEY / MAIL_FROM_EMAIL.');",
+									"}",
+									"pm.test('Response solo con metadata segura (sin codigo ni hash)', function () {",
+									"  pm.expect(Object.keys(data).sort()).to.eql(['expiresAt', 'purpose', 'resendAvailableAt', 'verificationId']);",
+									"  pm.expect(data).to.not.have.property('code');",
+									"  pm.expect(data).to.not.have.property('codeHash');",
+									"  pm.expect(data.purpose).to.eql('DELETE_ORGANIZATION');",
+									"});",
+									"pm.test('expiresAt ~10 minutos y resendAvailableAt ~60 segundos', function () {",
+									"  var now = Date.now();",
+									"  var expiresIn = Date.parse(data.expiresAt) - now;",
+									"  var resendIn = Date.parse(data.resendAvailableAt) - now;",
+									"  pm.expect(expiresIn).to.be.within(9 * 60 * 1000, 11 * 60 * 1000);",
+									"  pm.expect(resendIn).to.be.within(30 * 1000, 90 * 1000);",
+									"});",
+									"if (data.verificationId) {",
+									"  pm.collectionVariables.set('securityVerificationId', data.verificationId);",
+									"  console.log('securityVerificationId guardado: ' + data.verificationId);",
+									"}",
+									"if (pm.response.code === 201) {",
+									"  pm.collectionVariables.set('securityVerificationExpiresAt', data.expiresAt);",
+									"  pm.collectionVariables.set('securityVerificationResendAvailableAt', data.resendAvailableAt);",
+									"  pm.collectionVariables.set('securityVerificationCode', '');",
+									"  console.log('Codigo enviado al email del OWNER ({{email}}). Para los pasos [MANUAL], copiarlo en la variable securityVerificationCode.');",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"purpose\": \"DELETE_ORGANIZATION\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications"
+					},
+					"description": "Caso principal: el OWNER ACTIVE solicita un codigo DELETE_ORGANIZATION. El codigo llega SOLO por email al usuario autenticado (variable email: debe ser una casilla real para los pasos manuales). La response nunca incluye el codigo ni su hash. Guarda securityVerificationId, expiresAt y resendAvailableAt, y limpia securityVerificationCode. Requiere BREVO_API_KEY, MAIL_FROM_EMAIL y SECURITY_VERIFICATION_SECRET configurados en el backend; si el email no puede enviarse responde 503 y no se crea nada."
+				},
+				{
+					"name": "OWNER requests again within the cooldown (expect 429)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 429', function () {",
+									"  pm.response.to.have.status(429);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 429', function () {",
+									"  pm.expect(data.statusCode).to.eql(429);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"requested recently\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"purpose\": \"DELETE_ORGANIZATION\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications"
+					},
+					"description": "Cooldown de 60 segundos entre solicitudes del mismo usuario + organization + purpose. No envia email ni invalida la verificacion vigente."
+				},
+				{
+					"name": "Verify with invalid code format (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 400', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"code must be a string of exactly 6 digits\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"12ab56\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications/{{securityVerificationId}}/verify"
+					},
+					"description": "code debe ser un string de exactamente 6 digitos. Un body invalido no consume intentos."
+				},
+				{
+					"name": "Verify with a 5-digit code (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 400', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"code must be a string of exactly 6 digits\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"12345\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications/{{securityVerificationId}}/verify"
+					},
+					"description": "Longitud distinta de 6: 400. No consume intentos."
+				},
+				{
+					"name": "Verify with purpose in body (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 400', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"property purpose should not exist\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"123456\",\n  \"purpose\": \"DELETE_ORGANIZATION\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications/{{securityVerificationId}}/verify"
+					},
+					"description": "El purpose se toma de la verificacion almacenada: purpose, userId o email en el body responden 400."
+				},
+				{
+					"name": "Verify without token (expect 401)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 401', function () {",
+									"  pm.response.to.have.status(401);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"123456\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications/{{securityVerificationId}}/verify"
+					},
+					"description": "El endpoint exige JWT."
+				},
+				{
+					"name": "Verify a nonexistent verification (expect 404)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 404', function () {",
+									"  pm.response.to.have.status(404);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 404', function () {",
+									"  pm.expect(data.statusCode).to.eql(404);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Security verification not found\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"123456\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications/00000000-0000-4000-8000-000000000000/verify"
+					},
+					"description": "verificationId inexistente: 404."
+				},
+				{
+					"name": "Verify with non-UUID verificationId (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 400', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"123456\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications/not-a-uuid/verify"
+					},
+					"description": "ParseUUIDPipe: verificationId invalido responde 400."
+				},
+				{
+					"name": "ADMIN verifies the OWNER's verification (expect 404)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 404', function () {",
+									"  pm.response.to.have.status(404);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 404', function () {",
+									"  pm.expect(data.statusCode).to.eql(404);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Security verification not found\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"123456\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications/{{securityVerificationId}}/verify"
+					},
+					"description": "Anti-IDOR: la verificacion se busca por verificationId + usuario autenticado + organizationId. Una verificacion de otro usuario de la misma organization responde el mismo 404 que una inexistente y no consume intentos."
+				},
+				{
+					"name": "MEMBER verifies the OWNER's verification (expect 404)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 404', function () {",
+									"  pm.response.to.have.status(404);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 404', function () {",
+									"  pm.expect(data.statusCode).to.eql(404);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Security verification not found\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"123456\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications/{{securityVerificationId}}/verify"
+					},
+					"description": "Anti-IDOR: mismo caso con un MEMBER. 404 sin revelar existencia, status ni purpose."
+				},
+				{
+					"name": "Invited user (OWNER of organization B) requests a code there (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (pm.response.code === 503) {",
+									"  console.warn('503: el backend no pudo enviar el email. Revisar BREVO_API_KEY / MAIL_FROM_EMAIL.');",
+									"}",
+									"pm.test('Response solo con metadata segura (sin codigo ni hash)', function () {",
+									"  pm.expect(Object.keys(data).sort()).to.eql(['expiresAt', 'purpose', 'resendAvailableAt', 'verificationId']);",
+									"  pm.expect(data).to.not.have.property('code');",
+									"  pm.expect(data).to.not.have.property('codeHash');",
+									"  pm.expect(data.purpose).to.eql('DELETE_ORGANIZATION');",
+									"});",
+									"pm.test('expiresAt ~10 minutos y resendAvailableAt ~60 segundos', function () {",
+									"  var now = Date.now();",
+									"  var expiresIn = Date.parse(data.expiresAt) - now;",
+									"  var resendIn = Date.parse(data.resendAvailableAt) - now;",
+									"  pm.expect(expiresIn).to.be.within(9 * 60 * 1000, 11 * 60 * 1000);",
+									"  pm.expect(resendIn).to.be.within(30 * 1000, 90 * 1000);",
+									"});",
+									"if (data.verificationId) {",
+									"  pm.collectionVariables.set('otherSecurityVerificationId', data.verificationId);",
+									"  console.log('otherSecurityVerificationId guardado: ' + data.verificationId);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"purpose\": \"DELETE_ORGANIZATION\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}/security-verifications"
+					},
+					"description": "Setup cross-tenant: el usuario invitado es OWNER de otherOrganizationId y pide su propio codigo alli (se envia un email a invitedUserEmail). Guarda otherSecurityVerificationId."
+				},
+				{
+					"name": "Verification of organization B is not visible from organization A (expect 404)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 404', function () {",
+									"  pm.response.to.have.status(404);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 404', function () {",
+									"  pm.expect(data.statusCode).to.eql(404);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Security verification not found\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"123456\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications/{{otherSecurityVerificationId}}/verify"
+					},
+					"description": "Anti-IDOR: el mismo usuario es dueno de la verificacion, pero pertenece a otra organization. Con organizationId (donde es MEMBER ACTIVE) en el path responde 404 y no consume intentos: un codigo pedido para la organization B nunca sirve para la organization A."
+				},
+				{
+					"name": "Wrong code on the OWNER's verification (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 400', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Invalid verification code\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"000000\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications/{{securityVerificationId}}/verify"
+					},
+					"description": "Codigo incorrecto: 400 y suma un intento fallido (quedan 4). La response no informa intentos restantes. (Probabilidad 1 en 1.000.000 de que 000000 sea justo el codigo enviado.)"
+				},
+				{
+					"name": "Wrong code attempt 1/5 on organization B verification (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 400', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Invalid verification code\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"000000\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}/security-verifications/{{otherSecurityVerificationId}}/verify"
+					},
+					"description": "Limite de intentos: los intentos incorrectos 1 a 4 responden 400 y la verificacion sigue PENDING."
+				},
+				{
+					"name": "Wrong code attempt 2/5 on organization B verification (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 400', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Invalid verification code\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"111111\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}/security-verifications/{{otherSecurityVerificationId}}/verify"
+					},
+					"description": "Limite de intentos: los intentos incorrectos 1 a 4 responden 400 y la verificacion sigue PENDING."
+				},
+				{
+					"name": "Wrong code attempt 3/5 on organization B verification (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 400', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Invalid verification code\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"222222\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}/security-verifications/{{otherSecurityVerificationId}}/verify"
+					},
+					"description": "Limite de intentos: los intentos incorrectos 1 a 4 responden 400 y la verificacion sigue PENDING."
+				},
+				{
+					"name": "Wrong code attempt 4/5 on organization B verification (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 400', function () {",
+									"  pm.expect(data.statusCode).to.eql(400);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Invalid verification code\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"333333\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}/security-verifications/{{otherSecurityVerificationId}}/verify"
+					},
+					"description": "Limite de intentos: los intentos incorrectos 1 a 4 responden 400 y la verificacion sigue PENDING."
+				},
+				{
+					"name": "Wrong code attempt 5/5 locks the verification (expect 429)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 429', function () {",
+									"  pm.response.to.have.status(429);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 429', function () {",
+									"  pm.expect(data.statusCode).to.eql(429);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Maximum number of verification attempts reached\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"444444\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}/security-verifications/{{otherSecurityVerificationId}}/verify"
+					},
+					"description": "El quinto codigo incorrecto deja la verificacion LOCKED y responde 429 en ese mismo momento."
+				},
+				{
+					"name": "Verify a LOCKED verification (expect 429)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 429', function () {",
+									"  pm.response.to.have.status(429);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 429', function () {",
+									"  pm.expect(data.statusCode).to.eql(429);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Maximum number of verification attempts reached\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"555555\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}/security-verifications/{{otherSecurityVerificationId}}/verify"
+					},
+					"description": "Una verificacion LOCKED ya no puede verificarse, ni siquiera con el codigo correcto: hay que pedir uno nuevo (respetando el cooldown)."
+				},
+				{
+					"name": "[MANUAL] Verify with the code received by email",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var code = pm.collectionVariables.get('securityVerificationCode');",
+									"if (!code) {",
+									"  pm.test.skip('[MANUAL] Completar securityVerificationCode con el codigo del email del OWNER y volver a ejecutar', function () {});",
+									"} else {",
+									"  pm.test('Status is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"  });",
+									"  var data = {};",
+									"  try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"  pm.test('Response solo con metadata segura', function () {",
+									"    pm.expect(Object.keys(data).sort()).to.eql(['authorizationExpiresAt', 'purpose', 'verificationId', 'verifiedAt']);",
+									"    pm.expect(data.verificationId).to.eql(pm.collectionVariables.get('securityVerificationId'));",
+									"    pm.expect(data.purpose).to.eql('DELETE_ORGANIZATION');",
+									"  });",
+									"  pm.test('authorizationExpiresAt ~10 minutos despues de verifiedAt', function () {",
+									"    var window = Date.parse(data.authorizationExpiresAt) - Date.parse(data.verifiedAt);",
+									"    pm.expect(window).to.eql(10 * 60 * 1000);",
+									"  });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"{{securityVerificationCode}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications/{{securityVerificationId}}/verify"
+					},
+					"description": "MANUAL: requiere el codigo recibido por email. Pasos: ejecutar \"OWNER requests DELETE_ORGANIZATION code\", copiar el codigo del email del OWNER en la variable de coleccion securityVerificationCode y ejecutar este request (dentro de los 10 minutos y antes de pedir otro codigo). Exito: PENDING -> VERIFIED (no consume la autorizacion ni elimina nada). Sin la variable, el request responde 400 por formato (no consume intentos) y los asserts se saltean."
+				},
+				{
+					"name": "[MANUAL] Verify the same verification again (expect 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var code = pm.collectionVariables.get('securityVerificationCode');",
+									"if (!code) {",
+									"  pm.test.skip('[MANUAL] Requiere haber verificado antes con securityVerificationCode', function () {});",
+									"} else {",
+									"  pm.test('Status is 409', function () {",
+									"    pm.response.to.have.status(409);",
+									"  });",
+									"  var data = {};",
+									"  try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"  pm.test('Respuesta de error 409', function () {",
+									"    pm.expect(data.statusCode).to.eql(409);",
+									"  });",
+									"  pm.test('Mensaje esperado', function () {",
+									"    pm.expect(JSON.stringify(data.message)).to.include(\"already been verified\");",
+									"  });",
+									"  console.log('message: ' + JSON.stringify(data.message));",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"{{securityVerificationCode}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications/{{securityVerificationId}}/verify"
+					},
+					"description": "MANUAL (depende del paso anterior): una verificacion VERIFIED es de un solo uso; repetir el mismo codigo responde 409."
+				},
+				{
+					"name": "OWNER requests a new code after the cooldown (invalidates the previous one)",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var resendAt = Date.parse(pm.collectionVariables.get('securityVerificationResendAvailableAt') || '');",
+									"var waitMs = isNaN(resendAt) ? 0 : resendAt - Date.now() + 1500;",
+									"pm.collectionVariables.set('previousSecurityVerificationId', pm.collectionVariables.get('securityVerificationId'));",
+									"if (waitMs > 0) {",
+									"  console.log('Esperando ' + Math.ceil(waitMs / 1000) + ' s hasta que termine el cooldown...');",
+									"  setTimeout(function () {}, waitMs);",
+									"}"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (pm.response.code === 503) {",
+									"  console.warn('503: el backend no pudo enviar el email. Revisar BREVO_API_KEY / MAIL_FROM_EMAIL.');",
+									"}",
+									"pm.test('Response solo con metadata segura (sin codigo ni hash)', function () {",
+									"  pm.expect(Object.keys(data).sort()).to.eql(['expiresAt', 'purpose', 'resendAvailableAt', 'verificationId']);",
+									"  pm.expect(data).to.not.have.property('code');",
+									"  pm.expect(data).to.not.have.property('codeHash');",
+									"  pm.expect(data.purpose).to.eql('DELETE_ORGANIZATION');",
+									"});",
+									"pm.test('expiresAt ~10 minutos y resendAvailableAt ~60 segundos', function () {",
+									"  var now = Date.now();",
+									"  var expiresIn = Date.parse(data.expiresAt) - now;",
+									"  var resendIn = Date.parse(data.resendAvailableAt) - now;",
+									"  pm.expect(expiresIn).to.be.within(9 * 60 * 1000, 11 * 60 * 1000);",
+									"  pm.expect(resendIn).to.be.within(30 * 1000, 90 * 1000);",
+									"});",
+									"if (data.verificationId) {",
+									"  pm.collectionVariables.set('securityVerificationId', data.verificationId);",
+									"  console.log('securityVerificationId guardado: ' + data.verificationId);",
+									"}",
+									"pm.test('Es una verificacion nueva', function () {",
+									"  pm.expect(data.verificationId).to.not.eql(pm.collectionVariables.get('previousSecurityVerificationId'));",
+									"});",
+									"if (pm.response.code === 201) {",
+									"  pm.collectionVariables.set('securityVerificationExpiresAt', data.expiresAt);",
+									"  pm.collectionVariables.set('securityVerificationResendAvailableAt', data.resendAvailableAt);",
+									"  pm.collectionVariables.set('securityVerificationCode', '');",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"purpose\": \"DELETE_ORGANIZATION\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications"
+					},
+					"description": "El pre-request espera hasta resendAvailableAt (como maximo ~60 s). Un codigo nuevo para el mismo usuario + organization + purpose invalida las verificaciones abiertas anteriores (PENDING o VERIFIED no consumida -> SUPERSEDED): solo queda valido el mas reciente. Guarda la anterior en previousSecurityVerificationId y limpia securityVerificationCode."
+				},
+				{
+					"name": "Previous verification is no longer usable (expect 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 409', function () {",
+									"  pm.response.to.have.status(409);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta de error 409', function () {",
+									"  pm.expect(data.statusCode).to.eql(409);",
+									"});",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"replaced by a newer request\");",
+									"});",
+									"console.log('message: ' + JSON.stringify(data.message));"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"000000\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications/{{previousSecurityVerificationId}}/verify"
+					},
+					"description": "La verificacion anterior quedo SUPERSEDED (este verificada o no): 409 sin evaluar el codigo."
+				},
+				{
+					"name": "[MANUAL] Verify an expired code (expect 409)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var expiresAt = Date.parse(pm.collectionVariables.get('securityVerificationExpiresAt') || '');",
+									"if (isNaN(expiresAt) || Date.now() < expiresAt) {",
+									"  pm.test.skip('[MANUAL] Ejecutar este request mas de 10 minutos despues de pedir el codigo (securityVerificationExpiresAt)', function () {});",
+									"} else {",
+									"  pm.test('Status is 409', function () {",
+									"    pm.response.to.have.status(409);",
+									"  });",
+									"  var data = {};",
+									"  try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"  pm.test('Respuesta de error 409', function () {",
+									"    pm.expect(data.statusCode).to.eql(409);",
+									"  });",
+									"  pm.test('Mensaje esperado', function () {",
+									"    pm.expect(JSON.stringify(data.message)).to.include(\"expired\");",
+									"  });",
+									"  console.log('message: ' + JSON.stringify(data.message));",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"000000\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/security-verifications/{{securityVerificationId}}/verify"
+					},
+					"description": "MANUAL: ejecutar este request despues de securityVerificationExpiresAt (10 minutos desde \"OWNER requests a new code after the cooldown\"). Una verificacion vencida pasa a EXPIRED y responde 409 sin evaluar el codigo. Si se ejecuta antes del vencimiento, el request cuenta como codigo incorrecto (400) y los asserts se saltean."
+				}
+			],
+			"description": "Verificacion por email de operaciones sensibles (POST /organizations/:organizationId/security-verifications y POST .../:verificationId/verify), purpose DELETE_ORGANIZATION. No elimina nada: la eliminacion de organization todavia no existe. Cubre 401, 400 (purpose/formato/propiedades extra), 403 (ADMIN, MEMBER, sin Membership, Membership SUSPENDED), cooldown 429, anti-IDOR 404 (otro usuario, otra organization, inexistente), codigo incorrecto 400, limite de 5 intentos (429), uso unico (409) e invalidacion por codigo nuevo (409). Depende de las carpetas Auth, Organizations y Organization Leave: organizationId (OWNER = token), otherOrganizationId (OWNER = invitedUserToken), invitedUserToken (MEMBER en organizationId), adminUserToken y adminMembershipId (ADMIN). Envia emails reales al email del OWNER (variable email) y a invitedUserEmail: el backend necesita BREVO_API_KEY, MAIL_FROM_EMAIL y SECURITY_VERIFICATION_SECRET; si el email falla responde 503. Postman nunca recibe el codigo: los requests [MANUAL] necesitan que se copie el codigo del email en securityVerificationCode, o esperar el vencimiento de 10 minutos; sin eso sus asserts se saltean. El request \"OWNER requests a new code after the cooldown\" espera hasta ~60 s en su pre-request. Deja la organization y las memberships en el mismo estado en que las encuentra."
 		},
 		{
 			"name": "Modules",
