@@ -2,7 +2,7 @@
 	"info": {
 		"name": "TeamFlow Backend - Endpoints",
 		"_postman_id": "f0f9a3a3-8c7a-4c61-9c15-1e22f8f0d123",
-		"description": "Coleccion de endpoints actuales de TeamFlow: Auth, Users, Workspace, Organizations, Organization Invitations (invitaciones internas por userId) y Security Verifications (codigos por email para operaciones sensibles).",
+		"description": "Coleccion de endpoints actuales de TeamFlow: Auth, Users, Workspace, Organizations, Organization Invitations (invitaciones internas por userId), Security Verifications (codigos por email para operaciones sensibles) y Organization Deletion (eliminacion definitiva sobre una organization temporal).",
 		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
 	},
 	"variable": [
@@ -192,6 +192,54 @@
 		},
 		{
 			"key": "securityVerificationResendAvailableAt",
+			"value": ""
+		},
+		{
+			"key": "deleteOrganizationId",
+			"value": ""
+		},
+		{
+			"key": "deleteControlOrganizationId",
+			"value": ""
+		},
+		{
+			"key": "deleteInvitationToken",
+			"value": ""
+		},
+		{
+			"key": "deleteModuleId",
+			"value": ""
+		},
+		{
+			"key": "deleteComponentId",
+			"value": ""
+		},
+		{
+			"key": "deleteTagId",
+			"value": ""
+		},
+		{
+			"key": "deleteDiscussionId",
+			"value": ""
+		},
+		{
+			"key": "deleteMessageId",
+			"value": ""
+		},
+		{
+			"key": "deleteSecurityVerificationId",
+			"value": ""
+		},
+		{
+			"key": "deleteSecurityVerificationCode",
+			"value": ""
+		},
+		{
+			"key": "deleteAuthorizationExpiresAt",
+			"value": ""
+		},
+		{
+			"key": "deleteOrganizationDeleted",
 			"value": ""
 		}
 	],
@@ -7223,7 +7271,7 @@
 					"description": "MANUAL: ejecutar este request despues de securityVerificationExpiresAt (10 minutos desde \"OWNER requests a new code after the cooldown\"). Una verificacion vencida pasa a EXPIRED y responde 409 sin evaluar el codigo. Si se ejecuta antes del vencimiento, el request cuenta como codigo incorrecto (400) y los asserts se saltean."
 				}
 			],
-			"description": "Verificacion por email de operaciones sensibles (POST /organizations/:organizationId/security-verifications y POST .../:verificationId/verify), purpose DELETE_ORGANIZATION. No elimina nada: la eliminacion de organization todavia no existe. Cubre 401, 400 (purpose/formato/propiedades extra), 403 (ADMIN, MEMBER, sin Membership, Membership SUSPENDED), cooldown 429, anti-IDOR 404 (otro usuario, otra organization, inexistente), codigo incorrecto 400, limite de 5 intentos (429), uso unico (409) e invalidacion por codigo nuevo (409). Depende de las carpetas Auth, Organizations y Organization Leave: organizationId (OWNER = token), otherOrganizationId (OWNER = invitedUserToken), invitedUserToken (MEMBER en organizationId), adminUserToken y adminMembershipId (ADMIN). Envia emails reales al email del OWNER (variable email) y a invitedUserEmail: el backend necesita BREVO_API_KEY, MAIL_FROM_EMAIL y SECURITY_VERIFICATION_SECRET; si el email falla responde 503. Postman nunca recibe el codigo: los requests [MANUAL] necesitan que se copie el codigo del email en securityVerificationCode, o esperar el vencimiento de 10 minutos; sin eso sus asserts se saltean. El request \"OWNER requests a new code after the cooldown\" espera hasta ~60 s en su pre-request. Deja la organization y las memberships en el mismo estado en que las encuentra."
+			"description": "Verificacion por email de operaciones sensibles (POST /organizations/:organizationId/security-verifications y POST .../:verificationId/verify), purpose DELETE_ORGANIZATION. No elimina nada: la eliminacion (DELETE /organizations/:organizationId) se prueba en la carpeta Organization Deletion, sobre una organization temporal. Cubre 401, 400 (purpose/formato/propiedades extra), 403 (ADMIN, MEMBER, sin Membership, Membership SUSPENDED), cooldown 429, anti-IDOR 404 (otro usuario, otra organization, inexistente), codigo incorrecto 400, limite de 5 intentos (429), uso unico (409) e invalidacion por codigo nuevo (409). Depende de las carpetas Auth, Organizations y Organization Leave: organizationId (OWNER = token), otherOrganizationId (OWNER = invitedUserToken), invitedUserToken (MEMBER en organizationId), adminUserToken y adminMembershipId (ADMIN). Envia emails reales al email del OWNER (variable email) y a invitedUserEmail: el backend necesita BREVO_API_KEY, MAIL_FROM_EMAIL y SECURITY_VERIFICATION_SECRET; si el email falla responde 503. Postman nunca recibe el codigo: los requests [MANUAL] necesitan que se copie el codigo del email en securityVerificationCode, o esperar el vencimiento de 10 minutos; sin eso sus asserts se saltean. El request \"OWNER requests a new code after the cooldown\" espera hasta ~60 s en su pre-request. Deja la organization y las memberships en el mismo estado en que las encuentra."
 		},
 		{
 			"name": "Modules",
@@ -11509,6 +11557,1813 @@
 						],
 						"url": "{{baseUrl}}/workspace/notifications/test"
 					}
+				}
+			]
+		},
+		{
+			"name": "Organization Deletion",
+			"description": "Eliminacion definitiva de una organization (DELETE /organizations/:organizationId). DESTRUCTIVA, pero solo sobre una organization TEMPORAL creada por esta misma carpeta (deleteOrganizationId): nunca elimina organizationId ni otherOrganizationId, asi que no rompe el resto de la coleccion. Depende de Auth y Organizations: token (OWNER), invitedUserToken/invitedUserId, adminUserToken/adminUserId, organizationId, otherOrganizationId, moduleId y discussionId. Flujo: crea la organization temporal y una de control; agrega MEMBER y ADMIN; crea modulo, component, tag, relacion, discussion con contexto, asignacion y mensajes; prueba los rechazos (401, 400, MEMBER/ADMIN/LEFT 403, sin Membership 403, inexistente 403, sin verificacion 403, verificacion PENDING 403, verificacion de otra organization 403); pide el codigo, [MANUAL] lo verifica, [MANUAL] elimina (204) y comprueba segundo DELETE (403), /me/context, invitaciones pendientes, accesos, usuarios conservados y las demas organizations intactas. Pasos manuales: el codigo llega por email al OWNER (variable email, casilla real; el backend necesita BREVO_API_KEY, MAIL_FROM_EMAIL y SECURITY_VERIFICATION_SECRET). Copiarlo en deleteSecurityVerificationCode y ejecutar \"[MANUAL] Verify the temporary organization code\" y luego \"[MANUAL] OWNER deletes the temporary organization (expect 204)\" dentro de 10 minutos. Sin el codigo, el DELETE responde 403 y los checks posteriores se saltean. El caso de autorizacion vencida se prueba ejecutando su request mas de 10 minutos despues de verificar (antes de eso no elimina nada); luego hay que pedir y verificar un codigo nuevo. Limitacion: la API publica no distingue un recurso eliminado de uno de otra organization (404 anti-IDOR). Para confirmar la eliminacion fisica en base: SELECT count(*) FROM <tabla> WHERE organization_id = '<deleteOrganizationId>' en memberships, organization_invitations, work_modules, components, tags, discussions y security_verifications, y SELECT count(*) FROM discussion_messages WHERE discussion_id = '<deleteDiscussionId>' (todas deben dar 0), mas SELECT count(*) FROM users WHERE id IN ('<invitedUserId>', '<adminUserId>') (debe dar 2).",
+			"item": [
+				{
+					"name": "OWNER creates the temporary organization to delete (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (data.id) {",
+									"  pm.collectionVariables.set('deleteOrganizationId', data.id);",
+									"  console.log('deleteOrganizationId guardado: ' + data.id);",
+									"}",
+									"pm.collectionVariables.set('deleteOrganizationDeleted', '');",
+									"pm.collectionVariables.set('deleteSecurityVerificationId', '');",
+									"pm.collectionVariables.set('deleteSecurityVerificationCode', '');",
+									"pm.collectionVariables.set('deleteAuthorizationExpiresAt', '');"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Organizacion Temporal Eliminacion\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations"
+					},
+					"description": "Crea la organization TEMPORAL que esta carpeta elimina (el usuario de token queda OWNER). Es la unica organization que se elimina: organizationId y otherOrganizationId nunca se tocan. Reinicia las variables del flujo de eliminacion."
+				},
+				{
+					"name": "OWNER creates a control organization (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (data.id) {",
+									"  pm.collectionVariables.set('deleteControlOrganizationId', data.id);",
+									"  console.log('deleteControlOrganizationId guardado: ' + data.id);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Organizacion Control Eliminacion\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations"
+					},
+					"description": "Segunda organization del mismo OWNER, que NO se elimina: sirve para probar que una verificacion de otra organization no autoriza y que las demas organizations del usuario quedan intactas. Queda creada, igual que las organizations del resto de la coleccion."
+				},
+				{
+					"name": "OWNER invites the invited user as MEMBER (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (data.token) {",
+									"  pm.collectionVariables.set('deleteInvitationToken', data.token);",
+									"  console.log('deleteInvitationToken guardado: ' + data.token);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"userId\": \"{{invitedUserId}}\",\n  \"role\": \"MEMBER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/invitations"
+					}
+				},
+				{
+					"name": "Invited user accepts the MEMBER invitation (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organization-invitations/{{deleteInvitationToken}}/accept"
+					}
+				},
+				{
+					"name": "OWNER invites the admin user as ADMIN (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (data.token) {",
+									"  pm.collectionVariables.set('deleteInvitationToken', data.token);",
+									"  console.log('deleteInvitationToken guardado: ' + data.token);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"userId\": \"{{adminUserId}}\",\n  \"role\": \"ADMIN\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/invitations"
+					}
+				},
+				{
+					"name": "Admin user accepts the ADMIN invitation (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organization-invitations/{{deleteInvitationToken}}/accept"
+					}
+				},
+				{
+					"name": "OWNER creates a module in the temporary organization (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (data.id) {",
+									"  pm.collectionVariables.set('deleteModuleId', data.id);",
+									"  console.log('deleteModuleId guardado: ' + data.id);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Modulo a eliminar\",\n  \"description\": \"Dato representativo de la organization temporal\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/workspace/modules"
+					}
+				},
+				{
+					"name": "OWNER creates a component in the temporary organization (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (data.id) {",
+									"  pm.collectionVariables.set('deleteComponentId', data.id);",
+									"  console.log('deleteComponentId guardado: ' + data.id);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Component a eliminar\",\n  \"description\": \"Dato representativo de la organization temporal\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/workspace/components"
+					}
+				},
+				{
+					"name": "OWNER creates a tag in the temporary organization (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (data.id) {",
+									"  pm.collectionVariables.set('deleteTagId', data.id);",
+									"  console.log('deleteTagId guardado: ' + data.id);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"tag-a-eliminar\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/workspace/tags"
+					}
+				},
+				{
+					"name": "OWNER links the component to the module (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/workspace/modules/{{deleteModuleId}}/components/{{deleteComponentId}}"
+					}
+				},
+				{
+					"name": "OWNER creates a discussion with module, component and tag (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (data.id) {",
+									"  pm.collectionVariables.set('deleteDiscussionId', data.id);",
+									"  console.log('deleteDiscussionId guardado: ' + data.id);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"type\": \"QUESTION\",\n  \"title\": \"Discussion a eliminar\",\n  \"initialMessageContent\": \"Mensaje inicial de la organization temporal\",\n  \"moduleIds\": [\n    \"{{deleteModuleId}}\"\n  ],\n  \"componentIds\": [\n    \"{{deleteComponentId}}\"\n  ],\n  \"tagIds\": [\n    \"{{deleteTagId}}\"\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/workspace/discussions"
+					},
+					"description": "Crea discussion con relaciones WorkModule/Component/Tag, mensaje inicial y read state del OWNER."
+				},
+				{
+					"name": "OWNER assigns the ADMIN to the discussion (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"developerUserIds\": [\n    \"{{adminUserId}}\"\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/workspace/discussions/{{deleteDiscussionId}}/assignments"
+					}
+				},
+				{
+					"name": "OWNER posts a message (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (data.id) {",
+									"  pm.collectionVariables.set('deleteMessageId', data.id);",
+									"  console.log('deleteMessageId guardado: ' + data.id);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"content\": \"Mensaje del OWNER en la organization temporal\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/workspace/discussions/{{deleteDiscussionId}}/messages"
+					}
+				},
+				{
+					"name": "MEMBER posts a message (setup)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"content\": \"Mensaje del MEMBER en la organization temporal\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/workspace/discussions/{{deleteDiscussionId}}/messages"
+					},
+					"description": "Mensaje con otro autor: la eliminacion borra el mensaje pero nunca al autor (FK author_id RESTRICT hacia users)."
+				},
+				{
+					"name": "[OPTIONAL] OWNER posts an attachment (setup Cloudinary)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "type",
+									"value": "IMAGE",
+									"type": "text"
+								},
+								{
+									"key": "content",
+									"value": "Adjunto de la organization temporal",
+									"type": "text"
+								},
+								{
+									"key": "file",
+									"type": "file",
+									"src": []
+								}
+							]
+						},
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/workspace/discussions/{{deleteDiscussionId}}/messages/files"
+					},
+					"description": "Opcional: requiere seleccionar manualmente una imagen en \"file\" (sin archivo responde 400). Sirve para observar la limpieza de Cloudinary posterior al commit: tras el DELETE, el log del servidor muestra \"External attachment cleanup finished\" o \"Orphaned Cloudinary asset after organization deletion\". Sin tests automaticos para no romper el runner."
+				},
+				{
+					"name": "Delete organization without token (expect 401)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 401', function () {",
+									"  pm.response.to.have.status(401);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}"
+					}
+				},
+				{
+					"name": "Delete organization with non-UUID id (expect 400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/not-a-uuid"
+					}
+				},
+				{
+					"name": "MEMBER cannot delete the organization (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Only OWNER can delete the organization\");",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}"
+					}
+				},
+				{
+					"name": "ADMIN cannot delete the organization (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Only OWNER can delete the organization\");",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}"
+					}
+				},
+				{
+					"name": "Delete an organization without membership (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"User does not belong to this organization\");",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}"
+					},
+					"description": "Anti-IDOR: el usuario de token no tiene Membership en otherOrganizationId (existe y es de otro OWNER). Mismo 403 que una organization inexistente."
+				},
+				{
+					"name": "Delete a nonexistent organization (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"User does not belong to this organization\");",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/00000000-0000-4000-8000-000000000000"
+					},
+					"description": "Anti-IDOR: organization inexistente responde exactamente igual que una ajena; no se revela existencia."
+				},
+				{
+					"name": "OWNER without security verification cannot delete (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"A verified DELETE_ORGANIZATION security verification is required\");",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}"
+					},
+					"description": "La organization temporal todavia no tiene ninguna SecurityVerification: el OWNER es rechazado y no se borra nada."
+				},
+				{
+					"name": "MEMBER leaves the temporary organization (setup LEFT)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/leave"
+					},
+					"description": "Deja una Membership LEFT en la organization temporal: tambien debe eliminarse."
+				},
+				{
+					"name": "LEFT member cannot delete the organization (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"Membership is not active\");",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}"
+					}
+				},
+				{
+					"name": "OWNER re-invites the invited user (setup PENDING invitation)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (data.token) {",
+									"  pm.collectionVariables.set('deleteInvitationToken', data.token);",
+									"  console.log('deleteInvitationToken guardado: ' + data.token);",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"userId\": \"{{invitedUserId}}\",\n  \"role\": \"MEMBER\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/invitations"
+					},
+					"description": "Deja una invitacion PENDING a la organization temporal (ademas de las ACCEPTED): no debe sobrevivir a la eliminacion."
+				},
+				{
+					"name": "Invited user sees the pending invitation before deletion",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('La invitacion a la organization temporal esta pendiente', function () {",
+									"  var ids = (Array.isArray(data) ? data : []).map(function (i) { return i.organizationId; });",
+									"  pm.expect(ids).to.include(pm.collectionVariables.get('deleteOrganizationId'));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organization-invitations/me"
+					}
+				},
+				{
+					"name": "OWNER requests DELETE_ORGANIZATION code for the temporary organization",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (pm.response.code === 503) {",
+									"  console.warn('503: el backend no pudo enviar el email. Revisar BREVO_API_KEY / MAIL_FROM_EMAIL.');",
+									"}",
+									"if (data.verificationId) {",
+									"  pm.collectionVariables.set('deleteSecurityVerificationId', data.verificationId);",
+									"  pm.collectionVariables.set('deleteSecurityVerificationCode', '');",
+									"  pm.collectionVariables.set('deleteAuthorizationExpiresAt', '');",
+									"  console.log('Codigo enviado al email del OWNER ({{email}}). Para los pasos [MANUAL], copiarlo en deleteSecurityVerificationCode.');",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"purpose\": \"DELETE_ORGANIZATION\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/security-verifications"
+					},
+					"description": "El codigo llega SOLO por email al OWNER (variable email: casilla real). Guarda deleteSecurityVerificationId y limpia deleteSecurityVerificationCode. No existe bypass: el codigo se copia a mano."
+				},
+				{
+					"name": "OWNER with PENDING verification cannot delete (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"A verified DELETE_ORGANIZATION security verification is required\");",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}"
+					},
+					"description": "Pedir el codigo no alcanza: una verificacion PENDING no autoriza la eliminacion."
+				},
+				{
+					"name": "[MANUAL] Verify the temporary organization code",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var code = pm.collectionVariables.get('deleteSecurityVerificationCode');",
+									"if (!code) {",
+									"  pm.test.skip('[MANUAL] Completar deleteSecurityVerificationCode con el codigo del email del OWNER y volver a ejecutar', function () {});",
+									"} else {",
+									"  pm.test('Status is 201', function () {",
+									"    pm.response.to.have.status(201);",
+									"  });",
+									"  var data = {};",
+									"  try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"  if (data.authorizationExpiresAt) {",
+									"    pm.collectionVariables.set('deleteAuthorizationExpiresAt', data.authorizationExpiresAt);",
+									"  }",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"code\": \"{{deleteSecurityVerificationCode}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/security-verifications/{{deleteSecurityVerificationId}}/verify"
+					},
+					"description": "MANUAL: copiar el codigo del email en la variable de coleccion deleteSecurityVerificationCode y ejecutar. Exito: VERIFIED por 10 minutos (guarda deleteAuthorizationExpiresAt). Sin la variable responde 400 por formato (no consume intentos) y los asserts se saltean."
+				},
+				{
+					"name": "Verification of the temporary organization does not authorize another organization (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 403', function () {",
+									"  pm.response.to.have.status(403);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mensaje esperado', function () {",
+									"  pm.expect(JSON.stringify(data.message)).to.include(\"A verified DELETE_ORGANIZATION security verification is required\");",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteControlOrganizationId}}"
+					},
+					"description": "El usuario es OWNER de la organization de control pero solo tiene autorizacion en la temporal: la verificacion esta ligada a la organization y no sirve para otra."
+				},
+				{
+					"name": "[MANUAL] OWNER with expired authorization cannot delete (expect 403)",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var expiresAt = Date.parse(pm.collectionVariables.get('deleteAuthorizationExpiresAt') || '');",
+									"var expired = !isNaN(expiresAt) && Date.now() >= expiresAt;",
+									"/// Mientras la autorizacion siga vigente, este request NO debe eliminar la organization:",
+									"/// apunta a una organization inexistente y sus asserts se saltean.",
+									"pm.variables.set('deleteExpiredCheckOrganizationId', expired ? pm.collectionVariables.get('deleteOrganizationId') : '00000000-0000-4000-8000-000000000000');"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var expiresAt = Date.parse(pm.collectionVariables.get('deleteAuthorizationExpiresAt') || '');",
+									"if (isNaN(expiresAt) || Date.now() < expiresAt) {",
+									"  pm.test.skip('[MANUAL] Ejecutar mas de 10 minutos despues de verificar el codigo (deleteAuthorizationExpiresAt)', function () {});",
+									"} else {",
+									"  pm.test('Status is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"  });",
+									"  var data = {};",
+									"  try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"  pm.test('Mensaje esperado', function () {",
+									"    pm.expect(JSON.stringify(data.message)).to.include(\"A verified DELETE_ORGANIZATION security verification is required\");",
+									"  });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteExpiredCheckOrganizationId}}"
+					},
+					"description": "MANUAL: ejecutar mas de 10 minutos despues de \"[MANUAL] Verify the temporary organization code\". Una autorizacion VERIFIED vencida no se puede consumir: 403 y no se borra nada. Mientras la autorizacion siga vigente (o no se haya verificado), el pre-request dirige el DELETE a una organization inexistente para no eliminar nada y los asserts se saltean. Despues de probar el vencimiento hay que pedir otro codigo (pasado el cooldown) y verificarlo antes del DELETE exitoso."
+				},
+				{
+					"name": "[MANUAL] OWNER deletes the temporary organization (expect 204)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (!pm.collectionVariables.get('deleteSecurityVerificationCode')) {",
+									"  pm.test.skip('[MANUAL] Requiere verificar el codigo antes (deleteSecurityVerificationCode)', function () {});",
+									"} else {",
+									"  pm.test('Status is 204', function () {",
+									"    pm.response.to.have.status(204);",
+									"  });",
+									"  pm.test('Sin body', function () {",
+									"    pm.expect(pm.response.text()).to.eql('');",
+									"  });",
+									"  if (pm.response.code === 204) {",
+									"    pm.collectionVariables.set('deleteOrganizationDeleted', 'true');",
+									"    console.log('Organization temporal eliminada: ' + pm.collectionVariables.get('deleteOrganizationId'));",
+									"  }",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}"
+					},
+					"description": "MANUAL: requiere \"[MANUAL] Verify the temporary organization code\" dentro de los ultimos 10 minutos. Elimina DEFINITIVAMENTE la organization temporal (deleteOrganizationId), nunca organizationId. Responde 204 sin body y consume la autorizacion. Marca deleteOrganizationDeleted=true para los checks posteriores. Sin codigo, responde 403 (no hay autorizacion) y los asserts se saltean."
+				},
+				{
+					"name": "Second DELETE of the deleted organization (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (pm.collectionVariables.get('deleteOrganizationDeleted') !== 'true') {",
+									"  pm.test.skip('[MANUAL] Requiere que \"[MANUAL] OWNER deletes the temporary organization (expect 204)\" haya respondido 204', function () {});",
+									"} else {",
+									"  pm.test('Status is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"  });",
+									"  var data = {};",
+									"  try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"  pm.test('Mensaje esperado', function () {",
+									"    pm.expect(JSON.stringify(data.message)).to.include(\"User does not belong to this organization\");",
+									"  });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}"
+					},
+					"description": "No finge exito: la organization y la Membership del OWNER ya no existen. Mismo 403 que una organization ajena o inexistente."
+				},
+				{
+					"name": "Deleted organization no longer appears in OWNER me/context",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (pm.collectionVariables.get('deleteOrganizationDeleted') !== 'true') {",
+									"  pm.test.skip('[MANUAL] Requiere que \"[MANUAL] OWNER deletes the temporary organization (expect 204)\" haya respondido 204', function () {});",
+									"} else {",
+									"  pm.test('Status is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"  });",
+									"  var data = {};",
+									"  try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"  var ids = (data.organizations || []).map(function (o) { return o.id; });",
+									"  pm.test('La organization eliminada no aparece', function () {",
+									"    pm.expect(ids).to.not.include(pm.collectionVariables.get('deleteOrganizationId'));",
+									"  });",
+									"  pm.test('Las demas organizations del OWNER siguen apareciendo', function () {",
+									"    pm.expect(ids).to.include(pm.collectionVariables.get('organizationId'));",
+									"    pm.expect(ids).to.include(pm.collectionVariables.get('deleteControlOrganizationId'));",
+									"  });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/me/context"
+					}
+				},
+				{
+					"name": "OWNER can no longer access the deleted organization (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (pm.collectionVariables.get('deleteOrganizationDeleted') !== 'true') {",
+									"  pm.test.skip('[MANUAL] Requiere que \"[MANUAL] OWNER deletes the temporary organization (expect 204)\" haya respondido 204', function () {});",
+									"} else {",
+									"  pm.test('Status is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"  });",
+									"  var data = {};",
+									"  try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"  pm.test('Mensaje esperado', function () {",
+									"    pm.expect(JSON.stringify(data.message)).to.include(\"User does not belong to this organization\");",
+									"  });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}"
+					},
+					"description": "La Membership OWNER fue eliminada."
+				},
+				{
+					"name": "OWNER can no longer list discussions of the deleted organization (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (pm.collectionVariables.get('deleteOrganizationDeleted') !== 'true') {",
+									"  pm.test.skip('[MANUAL] Requiere que \"[MANUAL] OWNER deletes the temporary organization (expect 204)\" haya respondido 204', function () {});",
+									"} else {",
+									"  pm.test('Status is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"  });",
+									"  var data = {};",
+									"  try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"  pm.test('Mensaje esperado', function () {",
+									"    pm.expect(JSON.stringify(data.message)).to.include(\"User does not belong to this organization\");",
+									"  });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/workspace/discussions"
+					}
+				},
+				{
+					"name": "ADMIN membership was deleted: organization not in me/context",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (pm.collectionVariables.get('deleteOrganizationDeleted') !== 'true') {",
+									"  pm.test.skip('[MANUAL] Requiere que \"[MANUAL] OWNER deletes the temporary organization (expect 204)\" haya respondido 204', function () {});",
+									"} else {",
+									"  pm.test('Status is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"  });",
+									"  var data = {};",
+									"  try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"  pm.test('La organization eliminada no aparece para el ADMIN', function () {",
+									"    var ids = (data.organizations || []).map(function (o) { return o.id; });",
+									"    pm.expect(ids).to.not.include(pm.collectionVariables.get('deleteOrganizationId'));",
+									"  });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/me/context"
+					}
+				},
+				{
+					"name": "ADMIN can no longer access the deleted organization (expect 403)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (pm.collectionVariables.get('deleteOrganizationDeleted') !== 'true') {",
+									"  pm.test.skip('[MANUAL] Requiere que \"[MANUAL] OWNER deletes the temporary organization (expect 204)\" haya respondido 204', function () {});",
+									"} else {",
+									"  pm.test('Status is 403', function () {",
+									"    pm.response.to.have.status(403);",
+									"  });",
+									"  var data = {};",
+									"  try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"  pm.test('Mensaje esperado', function () {",
+									"    pm.expect(JSON.stringify(data.message)).to.include(\"User does not belong to this organization\");",
+									"  });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{adminUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}"
+					}
+				},
+				{
+					"name": "Pending invitation was deleted: not listed for the invited user",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (pm.collectionVariables.get('deleteOrganizationDeleted') !== 'true') {",
+									"  pm.test.skip('[MANUAL] Requiere que \"[MANUAL] OWNER deletes the temporary organization (expect 204)\" haya respondido 204', function () {});",
+									"} else {",
+									"  pm.test('Status is 200', function () {",
+									"    pm.response.to.have.status(200);",
+									"  });",
+									"  var data = {};",
+									"  try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"  pm.test('La invitacion PENDING a la organization eliminada ya no aparece', function () {",
+									"    var ids = (Array.isArray(data) ? data : []).map(function (i) { return i.organizationId; });",
+									"    pm.expect(ids).to.not.include(pm.collectionVariables.get('deleteOrganizationId'));",
+									"  });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organization-invitations/me"
+					}
+				},
+				{
+					"name": "Token of the deleted pending invitation (expect 404)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (pm.collectionVariables.get('deleteOrganizationDeleted') !== 'true') {",
+									"  pm.test.skip('[MANUAL] Requiere que \"[MANUAL] OWNER deletes the temporary organization (expect 204)\" haya respondido 204', function () {});",
+									"} else {",
+									"  pm.test('Status is 404', function () {",
+									"    pm.response.to.have.status(404);",
+									"  });",
+									"  var data = {};",
+									"  try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"  pm.test('Mensaje esperado', function () {",
+									"    pm.expect(JSON.stringify(data.message)).to.include(\"Invitation not found\");",
+									"  });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organization-invitations/{{deleteInvitationToken}}/accept"
+					},
+					"description": "La invitacion fue eliminada con la organization: su token ya no existe."
+				},
+				{
+					"name": "Module of the deleted organization is not reachable from the main organization (expect 404)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (pm.collectionVariables.get('deleteOrganizationDeleted') !== 'true') {",
+									"  pm.test.skip('[MANUAL] Requiere que \"[MANUAL] OWNER deletes the temporary organization (expect 204)\" haya respondido 204', function () {});",
+									"} else {",
+									"  pm.test('Status is 404', function () {",
+									"    pm.response.to.have.status(404);",
+									"  });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/modules/all/{{deleteModuleId}}"
+					},
+					"description": "Limitacion: la API publica no distingue \"eliminado\" de \"pertenece a otra organization\" (ambos 404, por anti-IDOR). Este check solo confirma que el id no es alcanzable; la eliminacion fisica se verifica en base de datos (ver descripcion de la carpeta)."
+				},
+				{
+					"name": "Discussion of the deleted organization is not reachable from the main organization (expect 404)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"if (pm.collectionVariables.get('deleteOrganizationDeleted') !== 'true') {",
+									"  pm.test.skip('[MANUAL] Requiere que \"[MANUAL] OWNER deletes the temporary organization (expect 204)\" haya respondido 204', function () {});",
+									"} else {",
+									"  pm.test('Status is 404', function () {",
+									"    pm.response.to.have.status(404);",
+									"  });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/discussions/{{deleteDiscussionId}}"
+					},
+					"description": "Misma limitacion que el check del modulo: 404 identico al de un recurso de otra organization."
+				},
+				{
+					"name": "Users are preserved: invited user can still log in",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Login status is 201 or 200', function () {",
+									"  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('El usuario sigue existiendo', function () {",
+									"  pm.expect(data.token).to.be.a('string').and.not.empty;",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('invitedUserId'));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{invitedUserEmail}}\",\n  \"password\": \"{{invitedUserPassword}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/login"
+					},
+					"description": "El usuario LEFT con invitacion pendiente en la organization eliminada conserva su cuenta. No sobreescribe invitedUserToken."
+				},
+				{
+					"name": "Users are preserved: admin user can still log in",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Login status is 201 or 200', function () {",
+									"  pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('El usuario sigue existiendo', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('adminUserId'));",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{adminUserEmail}}\",\n  \"password\": \"{{adminUserPassword}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/login"
+					},
+					"description": "El ADMIN de la organization eliminada (asignado a una discussion) conserva su cuenta. No sobreescribe adminUserToken."
+				},
+				{
+					"name": "Users are preserved: OWNER token is still valid",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/auth/validate"
+					},
+					"description": "El JWT del OWNER no se revoca y su cuenta sigue existiendo."
+				},
+				{
+					"name": "Main organization of the same OWNER is intact",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Sigue siendo OWNER de la organization principal', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('organizationId'));",
+									"  pm.expect(data.role).to.eql('OWNER');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}"
+					}
+				},
+				{
+					"name": "Main organization catalog is intact",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/modules/all/{{moduleId}}"
+					}
+				},
+				{
+					"name": "Main organization discussions are intact",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/discussions/{{discussionId}}"
+					}
+				},
+				{
+					"name": "Control organization of the same OWNER is intact",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Sigue siendo OWNER de la organization de control', function () {",
+									"  pm.expect(data.role).to.eql('OWNER');",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteControlOrganizationId}}"
+					}
+				},
+				{
+					"name": "Organization B is intact for its OWNER",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}"
+					},
+					"description": "La organization del usuario invitado (ex-miembro LEFT de la organization eliminada) no se ve afectada."
 				}
 			]
 		}

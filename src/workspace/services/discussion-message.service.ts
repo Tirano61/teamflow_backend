@@ -17,6 +17,7 @@ import { DiscussionMessageUpdateDto } from '../dto/update-discussion-message.dto
 import { Discussion } from '../entities/discussion.entity';
 import { DiscussionMessage } from '../entities/discussion_message.entity';
 import { DiscussionMessageType } from '../enums/discussion-message-type.enum';
+import { resolveStoredAttachmentResourceType } from '../helpers/attachment-resource-type.helper';
 import { DiscussionMessageListResponse } from '../interfaces/discussion-message-list-response.interface';
 import { WorkspaceNotificationService } from './workspace-notification.service';
 import { DiscussionService } from './discussion.service';
@@ -104,24 +105,7 @@ export class DiscussionMessageService {
 	private mapStoredAttachmentResourceType(
 		message: DiscussionMessage,
 	): 'image' | 'video' | 'raw' {
-		switch (message.type) {
-			case DiscussionMessageType.IMAGE:
-				return 'image';
-			case DiscussionMessageType.AUDIO:
-			case DiscussionMessageType.VIDEO:
-				return 'video';
-			case DiscussionMessageType.FILE:
-				return 'raw';
-			default:
-				break;
-		}
-
-		const mimeType = message.mimeType?.toLowerCase() ?? '';
-		if (mimeType.startsWith('image/')) return 'image';
-		if (mimeType.startsWith('audio/') || mimeType.startsWith('video/')) {
-			return 'video';
-		}
-		return 'raw';
+		return resolveStoredAttachmentResourceType(message.type, message.mimeType);
 	}
 
 	private normalizePagination(page: number, limit: number) {
