@@ -112,6 +112,15 @@ docker-compose up -d
     npm install --save-dev @types/passport-jwt
     ```
 
+## Zona horaria del backend
+
+El proceso Node corre siempre en UTC, en cualquier sistema operativo. `enforceBackendTimeZone()` ([src/config/timezone.config.ts](src/config/timezone.config.ts)) lo fija desde `main.ts` antes de conectar a PostgreSQL, sin scripts ni variables adicionales.
+
+- Las columnas `timestamp without time zone` (`createdAt`, `updatedAt`) guardan UTC y el driver `pg` las interpreta con la zona del proceso. En otra zona, la API devolveria instantes desplazados.
+- Un `TZ` distinto de `UTC`, en el entorno o en `.env`, se reemplaza y se registra un warning que indica el valor encontrado.
+- Quien arranque la conexion sin pasar por `main.ts` (`src/data-source.ts`, tests e2e con `AppModule`) debe correr tambien con `TZ=UTC`.
+- No convertir esas columnas a `timestamptz` cambiando solo las entidades: con `synchronize: true`, TypeORM borra y recrea una columna cuando cambia su tipo y se pierden las fechas historicas.
+
 ## Migraciones / Uso de pgvector
 
 Para usar pgvector y tener la columna `embedding` (tipo `vector(1536)`) en la tabla `sales_materials` ejecuta la migración TypeORM incluida. Usamos migraciones porque:

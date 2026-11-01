@@ -17,6 +17,9 @@ Autorizacion tenant:
 - Una Membership `SUSPENDED` no tiene acceso tenant aunque conserve role `OWNER` o `ADMIN`.
 - Una Membership `LEFT` (el usuario abandono la organization con `POST /organizations/:organizationId/leave`) tampoco tiene acceso tenant: recibe 403 igual que si nunca hubiera pertenecido.
 
+Fechas:
+- Todas las fechas de las respuestas son instantes ISO-8601 en UTC (`2026-10-31T16:04:38.835Z`). El cliente las convierte a su zona local para mostrarlas.
+
 ## Auth
 
 ### POST /auth/users
