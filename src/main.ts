@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { Request, Response, NextFunction, json, urlencoded } from 'express';
 import {
 	DISCUSSION_FILES_UPLOAD_ALLOWED_HEADERS,
@@ -10,6 +11,7 @@ import {
 	isDiscussionFilesUploadPath,
 } from './config/cors.config';
 import { GlobalHttpExceptionFilter } from './filters/global-http-exception.filter';
+import { enforceBackendTimeZone } from './config/timezone.config';
 
 const DEFAULT_REQUEST_BODY_LIMIT_BYTES = 25 * 1024 * 1024;
 
@@ -38,6 +40,10 @@ function setVaryOriginHeader(response: Response): void {
 }
 
 async function bootstrap() {
+	/// Despues de cargar .env (para detectar un TZ definido ahi) y antes de conectar a PostgreSQL.
+	await ConfigModule.envVariablesLoaded;
+	enforceBackendTimeZone();
+
 	const app = await NestFactory.create(AppModule);
 	const requestBodyLimit = resolveRequestBodyLimit();
 
