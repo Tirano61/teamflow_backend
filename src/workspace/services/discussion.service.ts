@@ -646,13 +646,18 @@ export class DiscussionService {
 		const membership = await this.orgAccessService.requireActiveMembership(user.id, organizationId);
 		this.assertCanManageDiscussion(membership);
 
-		const discussion = await this.discussionRepository.findOne({
-			where: { id, organizationId },
-		});
-		if (!discussion) throw new NotFoundException('Discussion not found');
-
-		discussion.status = status;
-		await this.discussionRepository.save(discussion);
+		// Un unico UPDATE acotado por organizacion. Solo escribe (y actualiza `updated_at`) si el
+		// status cambia, igual que `save()`, que no emitia UPDATE cuando el valor era el mismo.
+		// Si la Discussion no existe en esta organizacion no afecta filas y la lectura siguiente
+		// responde 404, como antes.
+		await this.discussionRepository
+			.createQueryBuilder()
+			.update(Discussion)
+			.set({ status })
+			.where('id = :id', { id })
+			.andWhere('organization_id = :organizationId', { organizationId })
+			.andWhere('status <> :status', { status })
+			.execute();
 
 		const updatedDiscussion = await this.findDiscussionById(organizationId, id);
 
