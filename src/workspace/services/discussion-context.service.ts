@@ -13,7 +13,10 @@ import { Tag } from '../entities/tag.entity';
 import { WorkspaceNotificationService } from './workspace-notification.service';
 import { DiscussionService } from './discussion.service';
 import { User } from '../../auth/entities/user.entity';
+import { Membership } from '../../memberships/entities/membership.entity';
 import { WorkspaceOrganizationAccessService } from './workspace-organization-access.service';
+
+type DiscussionContextRelation = 'workModules' | 'components' | 'tags';
 
 @Injectable()
 export class DiscussionContextService {
@@ -33,40 +36,52 @@ export class DiscussionContextService {
 		private readonly orgAccessService: WorkspaceOrganizationAccessService,
 	) { }
 
-	async addModuleToDiscussion(
-		organizationId: string,
-		discussionId: string,
-		moduleId: string,
+	private async requireDiscussionManager(
 		actor: User,
-	): Promise<Discussion> {
+		organizationId: string,
+	): Promise<Membership> {
 		const membership = await this.orgAccessService.requireActiveMembership(
 			actor.id,
 			organizationId,
 		);
 		this.orgAccessService.assertCanManageDiscussion(membership);
+		return membership;
+	}
 
-		const discussion = await this.discussionService.findDiscussionByIdForUser(
-			organizationId,
-			discussionId,
-			actor,
-		);
-		const module = await this.workModuleRepository.findOne({
-			where: { id: moduleId, organizationId },
+	/**
+	 * Ids actualmente relacionados con la Discussion para una sola relacion, en una consulta
+	 * acotada por organizacion. Mismo 404 que la lectura completa que se usaba antes.
+	 */
+	private async findRelatedIds(
+		organizationId: string,
+		discussionId: string,
+		relation: DiscussionContextRelation,
+	): Promise<Set<string>> {
+		const [discussion] = await this.discussionRepository.find({
+			where: { id: discussionId, organizationId },
+			relations: [relation],
 		});
-		if (!module) throw new NotFoundException('Module not found');
+		if (!discussion) throw new NotFoundException('Discussion not found');
+		return new Set((discussion[relation] ?? []).map((item) => item.id));
+	}
 
-		const alreadyRelated = (discussion.workModules ?? []).some(
-			(item) => item.id === module.id,
-		);
-		if (alreadyRelated) {
-			throw new BadRequestException(
-				'Discussion and module relation already exists',
-			);
-		}
+	/**
+	 * INSERT/DELETE directo sobre la tabla intermedia. `save()` volvia a leer la Discussion y sus
+	 * relaciones y abria una transaccion para una unica sentencia.
+	 */
+	private relationOf(relation: DiscussionContextRelation, discussionId: string) {
+		return this.discussionRepository
+			.createQueryBuilder()
+			.relation(Discussion, relation)
+			.of(discussionId);
+	}
 
-		discussion.workModules = [...(discussion.workModules ?? []), module];
-		await this.discussionRepository.save(discussion);
-
+	private async syncContextChanged(
+		organizationId: string,
+		discussionId: string,
+		actor: User,
+		logContext: string,
+	): Promise<void> {
 		try {
 			await this.workflowNotificationService.syncDiscussionContextChanged(
 				organizationId,
@@ -76,14 +91,44 @@ export class DiscussionContextService {
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : 'unknown';
 			this.logger.warn(
-				`Silent sync failed for discussion context add module discussionId=${discussionId} moduleId=${moduleId} reason=${reason}`,
+				`Silent sync failed for discussion context ${logContext} reason=${reason}`,
+			);
+		}
+	}
+
+	async addModuleToDiscussion(
+		organizationId: string,
+		discussionId: string,
+		moduleId: string,
+		actor: User,
+	): Promise<Discussion> {
+		const membership = await this.requireDiscussionManager(actor, organizationId);
+
+		const relatedIds = await this.findRelatedIds(organizationId, discussionId, 'workModules');
+		const module = await this.workModuleRepository.findOne({
+			where: { id: moduleId, organizationId },
+		});
+		if (!module) throw new NotFoundException('Module not found');
+
+		if (relatedIds.has(module.id)) {
+			throw new BadRequestException(
+				'Discussion and module relation already exists',
 			);
 		}
 
-		return this.discussionService.findDiscussionByIdForUser(
+		await this.relationOf('workModules', discussionId).add(module.id);
+
+		await this.syncContextChanged(
 			organizationId,
 			discussionId,
 			actor,
+			`add module discussionId=${discussionId} moduleId=${moduleId}`,
+		);
+
+		return this.discussionService.findDiscussionByIdForMembership(
+			organizationId,
+			discussionId,
+			membership,
 		);
 	}
 
@@ -93,48 +138,28 @@ export class DiscussionContextService {
 		moduleId: string,
 		actor: User,
 	): Promise<Discussion> {
-		const membership = await this.orgAccessService.requireActiveMembership(
-			actor.id,
-			organizationId,
-		);
-		this.orgAccessService.assertCanManageDiscussion(membership);
+		const membership = await this.requireDiscussionManager(actor, organizationId);
 
-		const discussion = await this.discussionService.findDiscussionByIdForUser(
-			organizationId,
-			discussionId,
-			actor,
-		);
-		const hasRelation = (discussion.workModules ?? []).some(
-			(item) => item.id === moduleId,
-		);
-		if (!hasRelation) {
+		const relatedIds = await this.findRelatedIds(organizationId, discussionId, 'workModules');
+		if (!relatedIds.has(moduleId)) {
 			throw new NotFoundException(
 				'Discussion and module relation not found',
 			);
 		}
 
-		discussion.workModules = (discussion.workModules ?? []).filter(
-			(item) => item.id !== moduleId,
-		);
-		await this.discussionRepository.save(discussion);
+		await this.relationOf('workModules', discussionId).remove(moduleId);
 
-		try {
-			await this.workflowNotificationService.syncDiscussionContextChanged(
-				organizationId,
-				discussionId,
-				actor,
-			);
-		} catch (error) {
-			const reason = error instanceof Error ? error.message : 'unknown';
-			this.logger.warn(
-				`Silent sync failed for discussion context remove module discussionId=${discussionId} moduleId=${moduleId} reason=${reason}`,
-			);
-		}
-
-		return this.discussionService.findDiscussionByIdForUser(
+		await this.syncContextChanged(
 			organizationId,
 			discussionId,
 			actor,
+			`remove module discussionId=${discussionId} moduleId=${moduleId}`,
+		);
+
+		return this.discussionService.findDiscussionByIdForMembership(
+			organizationId,
+			discussionId,
+			membership,
 		);
 	}
 
@@ -144,51 +169,33 @@ export class DiscussionContextService {
 		componentId: string,
 		actor: User,
 	): Promise<Discussion> {
-		const membership = await this.orgAccessService.requireActiveMembership(
-			actor.id,
-			organizationId,
-		);
-		this.orgAccessService.assertCanManageDiscussion(membership);
+		const membership = await this.requireDiscussionManager(actor, organizationId);
 
-		const discussion = await this.discussionService.findDiscussionByIdForUser(
-			organizationId,
-			discussionId,
-			actor,
-		);
+		const relatedIds = await this.findRelatedIds(organizationId, discussionId, 'components');
 		const component = await this.componentRepository.findOne({
 			where: { id: componentId, organizationId },
 		});
 		if (!component) throw new NotFoundException('Component not found');
 
-		const alreadyRelated = (discussion.components ?? []).some(
-			(item) => item.id === component.id,
-		);
-		if (alreadyRelated) {
+		if (relatedIds.has(component.id)) {
 			throw new BadRequestException(
 				'Discussion and component relation already exists',
 			);
 		}
 
-		discussion.components = [...(discussion.components ?? []), component];
-		await this.discussionRepository.save(discussion);
+		await this.relationOf('components', discussionId).add(component.id);
 
-		try {
-			await this.workflowNotificationService.syncDiscussionContextChanged(
-				organizationId,
-				discussionId,
-				actor,
-			);
-		} catch (error) {
-			const reason = error instanceof Error ? error.message : 'unknown';
-			this.logger.warn(
-				`Silent sync failed for discussion context add component discussionId=${discussionId} componentId=${componentId} reason=${reason}`,
-			);
-		}
-
-		return this.discussionService.findDiscussionByIdForUser(
+		await this.syncContextChanged(
 			organizationId,
 			discussionId,
 			actor,
+			`add component discussionId=${discussionId} componentId=${componentId}`,
+		);
+
+		return this.discussionService.findDiscussionByIdForMembership(
+			organizationId,
+			discussionId,
+			membership,
 		);
 	}
 
@@ -198,48 +205,28 @@ export class DiscussionContextService {
 		componentId: string,
 		actor: User,
 	): Promise<Discussion> {
-		const membership = await this.orgAccessService.requireActiveMembership(
-			actor.id,
-			organizationId,
-		);
-		this.orgAccessService.assertCanManageDiscussion(membership);
+		const membership = await this.requireDiscussionManager(actor, organizationId);
 
-		const discussion = await this.discussionService.findDiscussionByIdForUser(
-			organizationId,
-			discussionId,
-			actor,
-		);
-		const hasRelation = (discussion.components ?? []).some(
-			(item) => item.id === componentId,
-		);
-		if (!hasRelation) {
+		const relatedIds = await this.findRelatedIds(organizationId, discussionId, 'components');
+		if (!relatedIds.has(componentId)) {
 			throw new NotFoundException(
 				'Discussion and component relation not found',
 			);
 		}
 
-		discussion.components = (discussion.components ?? []).filter(
-			(item) => item.id !== componentId,
-		);
-		await this.discussionRepository.save(discussion);
+		await this.relationOf('components', discussionId).remove(componentId);
 
-		try {
-			await this.workflowNotificationService.syncDiscussionContextChanged(
-				organizationId,
-				discussionId,
-				actor,
-			);
-		} catch (error) {
-			const reason = error instanceof Error ? error.message : 'unknown';
-			this.logger.warn(
-				`Silent sync failed for discussion context remove component discussionId=${discussionId} componentId=${componentId} reason=${reason}`,
-			);
-		}
-
-		return this.discussionService.findDiscussionByIdForUser(
+		await this.syncContextChanged(
 			organizationId,
 			discussionId,
 			actor,
+			`remove component discussionId=${discussionId} componentId=${componentId}`,
+		);
+
+		return this.discussionService.findDiscussionByIdForMembership(
+			organizationId,
+			discussionId,
+			membership,
 		);
 	}
 
@@ -249,35 +236,23 @@ export class DiscussionContextService {
 		tagId: string,
 		actor: User,
 	): Promise<Discussion> {
-		const membership = await this.orgAccessService.requireActiveMembership(
-			actor.id,
-			organizationId,
-		);
-		this.orgAccessService.assertCanManageDiscussion(membership);
+		const membership = await this.requireDiscussionManager(actor, organizationId);
 
-		const discussion = await this.discussionService.findDiscussionByIdForUser(
-			organizationId,
-			discussionId,
-			actor,
-		);
+		const relatedIds = await this.findRelatedIds(organizationId, discussionId, 'tags');
 		const tag = await this.tagRepository.findOne({
 			where: { id: tagId, organizationId },
 		});
 		if (!tag) throw new NotFoundException('Tag not found');
 
-		const alreadyRelated = (discussion.tags ?? []).some(
-			(item) => item.id === tag.id,
-		);
-		if (alreadyRelated) {
+		if (relatedIds.has(tag.id)) {
 			throw new BadRequestException('Discussion and tag relation already exists');
 		}
 
-		discussion.tags = [...(discussion.tags ?? []), tag];
-		await this.discussionRepository.save(discussion);
-		return this.discussionService.findDiscussionByIdForUser(
+		await this.relationOf('tags', discussionId).add(tag.id);
+		return this.discussionService.findDiscussionByIdForMembership(
 			organizationId,
 			discussionId,
-			actor,
+			membership,
 		);
 	}
 
@@ -287,28 +262,18 @@ export class DiscussionContextService {
 		tagId: string,
 		actor: User,
 	): Promise<Discussion> {
-		const membership = await this.orgAccessService.requireActiveMembership(
-			actor.id,
-			organizationId,
-		);
-		this.orgAccessService.assertCanManageDiscussion(membership);
+		const membership = await this.requireDiscussionManager(actor, organizationId);
 
-		const discussion = await this.discussionService.findDiscussionByIdForUser(
-			organizationId,
-			discussionId,
-			actor,
-		);
-		const hasRelation = (discussion.tags ?? []).some((item) => item.id === tagId);
-		if (!hasRelation) {
+		const relatedIds = await this.findRelatedIds(organizationId, discussionId, 'tags');
+		if (!relatedIds.has(tagId)) {
 			throw new NotFoundException('Discussion and tag relation not found');
 		}
 
-		discussion.tags = (discussion.tags ?? []).filter((item) => item.id !== tagId);
-		await this.discussionRepository.save(discussion);
-		return this.discussionService.findDiscussionByIdForUser(
+		await this.relationOf('tags', discussionId).remove(tagId);
+		return this.discussionService.findDiscussionByIdForMembership(
 			organizationId,
 			discussionId,
-			actor,
+			membership,
 		);
 	}
 }

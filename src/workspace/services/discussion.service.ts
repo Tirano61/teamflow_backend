@@ -333,7 +333,7 @@ export class DiscussionService {
 		dto: DiscussionCreateDto,
 		user: User,
 	): Promise<Discussion> {
-		await this.orgAccessService.requireActiveMembership(user.id, organizationId);
+		const membership = await this.orgAccessService.requireActiveMembership(user.id, organizationId);
 		const title = this.normalizeTitle(dto.title);
 		const initialMessageContent = this.normalizeInitialMessageContent(
 			dto.initialMessageContent,
@@ -373,11 +373,11 @@ export class DiscussionService {
 			return saved.id;
 		});
 
-		// La membership ACTIVE ya se valido al inicio de esta misma operacion.
-		const discussion = await this.findHydratedDiscussionForMember(
+		// Reutiliza la membership ACTIVE validada al inicio de esta misma operacion.
+		const discussion = await this.findDiscussionByIdForMembership(
 			organizationId,
 			discussionId,
-			user.id,
+			membership,
 		);
 
 		try {
@@ -536,25 +536,33 @@ export class DiscussionService {
 		id: string,
 		user: User,
 	): Promise<Discussion> {
-		await this.orgAccessService.requireActiveMembership(user.id, organizationId);
-		return this.findHydratedDiscussionForMember(organizationId, id, user.id);
+		const membership = await this.orgAccessService.requireActiveMembership(user.id, organizationId);
+		return this.findDiscussionByIdForMembership(organizationId, id, membership);
 	}
 
 	/**
-	 * Discussion con relaciones e `isUnread` para `userId`, SIN validar membership: solo para
-	 * llamadores que ya validaron la membership ACTIVE de ese usuario en `organizationId` dentro de
-	 * la misma operacion. La consulta sigue acotada por organizacion.
+	 * Igual que `findDiscussionByIdForUser`, pero reutiliza la membership que el llamador ya
+	 * obtuvo con `requireActiveMembership` en la misma operacion, en lugar de volver a consultarla.
+	 * Rechaza una membership que no este ACTIVE o que sea de otra organizacion.
 	 */
-	private async findHydratedDiscussionForMember(
+	async findDiscussionByIdForMembership(
 		organizationId: string,
 		id: string,
-		userId: string,
+		membership: Membership,
 	): Promise<Discussion> {
+		if (
+			membership.status !== MembershipStatus.ACTIVE ||
+			membership.organization?.id !== organizationId ||
+			!membership.user?.id
+		) {
+			throw new ForbiddenException('Membership is not active');
+		}
+
 		const discussion = await this.findDiscussionById(organizationId, id);
 		const unreadByDiscussionId = await this.findUnreadByDiscussionIds(
 			organizationId,
 			[id],
-			userId,
+			membership.user.id,
 		);
 		discussion.isUnread = unreadByDiscussionId.get(id) ?? false;
 		return discussion;
