@@ -134,6 +134,51 @@ export class DiscussionService {
 		return uniqueIds.map((id) => mapById.get(id)!);
 	}
 
+	/**
+	 * Valida en una sola consulta (UNION ALL) que los ids de modulos, componentes y tags existan
+	 * en la organizacion. Equivale a llamar `resolveEntitiesByIds` para cada grupo, con los mismos
+	 * errores y en el mismo orden (Module, Component, Tag), pero en un unico viaje a la base.
+	 */
+	private async assertContextIdsBelongToOrganization(
+		manager: EntityManager,
+		organizationId: string,
+		request: { moduleIds?: string[]; componentIds?: string[]; tagIds?: string[] },
+	): Promise<void> {
+		const groups = [
+			{ entityName: 'Module', target: WorkModule, ids: request.moduleIds ?? [] },
+			{ entityName: 'Component', target: Component, ids: request.componentIds ?? [] },
+			{ entityName: 'Tag', target: Tag, ids: request.tagIds ?? [] },
+		].filter((group) => group.ids.length > 0);
+		if (!groups.length) return;
+
+		const driver = manager.connection.driver;
+		const parameters: unknown[] = [organizationId];
+		const selects = groups.map((group, index) => {
+			const metadata = manager.connection.getMetadata(group.target);
+			const organizationColumn = metadata.findColumnWithPropertyName('organizationId')!.databaseName;
+			parameters.push([...new Set(group.ids)]);
+			return `SELECT ${index} AS "group", id FROM ${driver.escape(metadata.tableName)} WHERE ${driver.escape(organizationColumn)} = $1 AND id = ANY($${parameters.length}::uuid[])`;
+		});
+
+		const rows: Array<{ group: number; id: string }> = await manager.query(
+			selects.join(' UNION ALL '),
+			parameters,
+		);
+		const foundIdsByGroup = groups.map(() => new Set<string>());
+		for (const row of rows) foundIdsByGroup[Number(row.group)].add(row.id);
+
+		groups.forEach((group, index) => {
+			const uniqueIds = [...new Set(group.ids)];
+			if (uniqueIds.length !== group.ids.length) {
+				throw new BadRequestException(`${group.entityName} ids contain duplicates`);
+			}
+			const missingIds = uniqueIds.filter((id) => !foundIdsByGroup[index].has(id));
+			if (missingIds.length) {
+				throw new NotFoundException(`${group.entityName} not found: ${missingIds.join(', ')}`);
+			}
+		});
+	}
+
 	private async findDiscussionWithRelations(
 		organizationId: string,
 		id: string,
@@ -267,17 +312,6 @@ export class DiscussionService {
 
 	private sanitizeDiscussionListAssignees(discussions: Discussion[]): Discussion[] {
 		return discussions.map((discussion) => this.sanitizeDiscussionAssignees(discussion));
-	}
-
-	private hasDifferentEntityIds(
-		current: Array<{ id: string }> | undefined,
-		next: Array<{ id: string }> | undefined,
-	): boolean {
-		const currentIds = new Set((current ?? []).map((item) => item.id));
-		const nextIds = new Set((next ?? []).map((item) => item.id));
-
-		if (currentIds.size !== nextIds.size) return true;
-		return [...currentIds].some((id) => !nextIds.has(id));
 	}
 
 	private async resolveAssignableDevelopersByIds(
@@ -571,70 +605,105 @@ export class DiscussionService {
 		let didChangeContext = false;
 		const membership = await this.orgAccessService.requireActiveMembership(user.id, organizationId);
 
-		const discussionId = await this.dataSource.transaction(async (manager) => {
-			const discussionRepository = manager.getRepository(Discussion);
-			const workModuleRepository = manager.getRepository(WorkModule);
-			const componentRepository = manager.getRepository(Component);
-			const tagRepository = manager.getRepository(Tag);
-
-			const discussion = await discussionRepository.findOne({
-				where: { id, organizationId },
-				relations: ['createdBy', 'workModules', 'components', 'tags'],
-			});
-
-			if (!discussion) throw new NotFoundException('Discussion not found');
-			this.assertCanEditDiscussion(user, discussion, membership);
-
-			if (dto.title !== undefined) {
-				discussion.title = this.normalizeTitle(dto.title);
-			}
-
-			if (dto.type !== undefined) {
-				discussion.type = dto.type;
-			}
-
-			if (dto.moduleIds !== undefined || dto.componentIds !== undefined || dto.tagIds !== undefined) {
-				this.assertCanManageDiscussion(membership);
-			}
-
-			if (dto.moduleIds !== undefined) {
-				const nextModules = await this.resolveEntitiesByIds(
-					organizationId,
-					dto.moduleIds,
-					workModuleRepository,
-					'Module',
-				);
-				didChangeContext =
-					didChangeContext || this.hasDifferentEntityIds(discussion.workModules, nextModules);
-				discussion.workModules = nextModules;
-			}
-
-			if (dto.componentIds !== undefined) {
-				const nextComponents = await this.resolveEntitiesByIds(
-					organizationId,
-					dto.componentIds,
-					componentRepository,
-					'Component',
-				);
-				didChangeContext =
-					didChangeContext || this.hasDifferentEntityIds(discussion.components, nextComponents);
-				discussion.components = nextComponents;
-			}
-
-			if (dto.tagIds !== undefined) {
-				discussion.tags = await this.resolveEntitiesByIds(
-					organizationId,
-					dto.tagIds,
-					tagRepository,
-					'Tag',
-				);
-				didChangeContext = true;
-			}
-
-			await discussionRepository.save(discussion);
-			return discussion.id;
+		// Lectura sin bloqueo (READ COMMITTED), igual que la que antes se hacia dentro de la
+		// transaccion: el estado actual solo se usa para permisos y para calcular las diferencias.
+		const [discussion] = await this.discussionRepository.find({
+			where: { id, organizationId },
+			relations: ['createdBy', 'workModules', 'components', 'tags'],
 		});
 
+		if (!discussion) throw new NotFoundException('Discussion not found');
+		this.assertCanEditDiscussion(user, discussion, membership);
+
+		// Mismo criterio que `save()`: solo se escriben las columnas cuyo valor cambia, y solo esas
+		// escrituras actualizan `updated_at` (cambiar unicamente relaciones no lo modifica).
+		const columnChanges: Partial<Pick<Discussion, 'title' | 'type'>> = {};
+		if (dto.title !== undefined) {
+			const title = this.normalizeTitle(dto.title);
+			if (title !== discussion.title) columnChanges.title = title;
+		}
+
+		if (dto.type !== undefined && dto.type !== discussion.type) {
+			columnChanges.type = dto.type;
+		}
+
+		if (dto.moduleIds !== undefined || dto.componentIds !== undefined || dto.tagIds !== undefined) {
+			this.assertCanManageDiscussion(membership);
+		}
+
+		await this.assertContextIdsBelongToOrganization(this.dataSource.manager, organizationId, dto);
+
+		const relationChanges: Array<{
+			relation: 'workModules' | 'components' | 'tags';
+			added: string[];
+			removed: string[];
+		}> = [];
+		const collectRelationChange = (
+			relation: 'workModules' | 'components' | 'tags',
+			current: Array<{ id: string }>,
+			nextIds: string[],
+		): boolean => {
+			const currentIds = new Set(current.map((item) => item.id));
+			const nextIdSet = new Set(nextIds);
+			const added = [...nextIdSet].filter((relatedId) => !currentIds.has(relatedId));
+			const removed = [...currentIds].filter((relatedId) => !nextIdSet.has(relatedId));
+			if (!added.length && !removed.length) return false;
+			relationChanges.push({ relation, added, removed });
+			return true;
+		};
+
+		if (dto.moduleIds !== undefined) {
+			didChangeContext =
+				collectRelationChange('workModules', discussion.workModules ?? [], dto.moduleIds) ||
+				didChangeContext;
+		}
+
+		if (dto.componentIds !== undefined) {
+			didChangeContext =
+				collectRelationChange('components', discussion.components ?? [], dto.componentIds) ||
+				didChangeContext;
+		}
+
+		if (dto.tagIds !== undefined) {
+			collectRelationChange('tags', discussion.tags ?? [], dto.tagIds);
+			didChangeContext = true;
+		}
+
+		// Escrituras dirigidas (UPDATE de columnas e INSERT/DELETE en las tablas intermedias) en
+		// lugar de `save()`, que recargaba la Discussion y sus relaciones antes de escribir.
+		// Si hay mas de una sentencia se ejecutan juntas en una transaccion; una sola es atomica.
+		const writes: Array<(manager: EntityManager) => Promise<unknown>> = [];
+		if (Object.keys(columnChanges).length) {
+			writes.push((manager) =>
+				manager
+					.createQueryBuilder()
+					.update(Discussion)
+					.set(columnChanges)
+					.where('id = :id', { id })
+					.andWhere('organization_id = :organizationId', { organizationId })
+					.execute(),
+			);
+		}
+		for (const change of relationChanges) {
+			const relationQuery = (manager: EntityManager) =>
+				manager.createQueryBuilder().relation(Discussion, change.relation).of(id);
+			if (change.removed.length) {
+				writes.push((manager) => relationQuery(manager).remove(change.removed));
+			}
+			if (change.added.length) {
+				writes.push((manager) => relationQuery(manager).add(change.added));
+			}
+		}
+
+		if (writes.length > 1) {
+			await this.dataSource.transaction(async (manager) => {
+				for (const write of writes) await write(manager);
+			});
+		} else if (writes.length === 1) {
+			await writes[0](this.dataSource.manager);
+		}
+
+		const discussionId = discussion.id;
 		const updatedDiscussion = await this.findDiscussionById(organizationId, discussionId);
 
 		if (didChangeContext) {
