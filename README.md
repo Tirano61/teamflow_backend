@@ -121,6 +121,29 @@ El proceso Node corre siempre en UTC, en cualquier sistema operativo. `enforceBa
 - Quien arranque la conexion sin pasar por `main.ts` (`src/data-source.ts`, tests e2e con `AppModule`) debe correr tambien con `TZ=UTC`.
 - No convertir esas columnas a `timestamptz` cambiando solo las entidades: con `synchronize: true`, TypeORM borra y recrea una columna cuando cambia su tipo y se pierden las fechas historicas.
 
+## Conexiones a PostgreSQL / Neon
+
+TypeORM usa el pool de `pg` (`pg-pool`). Sus opciones salen de `buildDatabasePoolOptions()` ([src/config/database-pool.config.ts](src/config/database-pool.config.ts)) y se pasan en `extra`. SSL y `DATABASE_URL` se manejan igual que antes, en `app.module.ts`.
+
+| Variable | Default | Uso |
+|---|---|---|
+| `DB_POOL_IDLE_TIMEOUT_MS` | `240000` (4 min) | Tiempo que una conexion ociosa queda abierta en el pool antes de cerrarse. |
+| `DB_POOL_MAX` | `10` | Conexiones maximas por instancia del backend (el mismo valor que usaba TypeORM por defecto). |
+
+Ademas el pool activa TCP keepalive (primera sonda a los 10 s sin trafico) para descartar sockets muertos antes de reutilizarlos. Un valor no entero o menor o igual a 0 se ignora con un warning y se usa el default.
+
+Por que:
+
+- Abrir una conexion nueva contra Neon cuesta unos 6 viajes de red: TCP, SSLRequest, TLS, startup y autenticacion SCRAM (dos viajes). Medido desde Argentina hacia `us-east-2` (RTT ~190 ms): ~1,15 s por conexion. Un `SELECT 1` sobre una conexion abierta tarda un viaje (~190 ms).
+- El default de `pg-pool` cierra las conexiones ociosas a los 10 s, asi que cualquier pausa del usuario mayor a 10 s hacia que la siguiente peticion pagara esos ~1,15 s.
+- Neon suspende el computo tras 5 min de inactividad (fijo en el plan Free). Mantener `DB_POOL_IDLE_TIMEOUT_MS` por debajo de 300000 asegura que una conexion ociosa del pool nunca sea la que lo mantiene encendido.
+
+Notas:
+
+- `DATABASE_URL` apunta al pooler de Neon (host `-pooler`, PgBouncer en modo transaccion): no usar `SET` de sesion, `LISTEN/NOTIFY` ni advisory locks de sesion sobre estas conexiones.
+- No usar `min` en el pool ni `DB_POOL_IDLE_TIMEOUT_MS` muy alto: dejaria conexiones abiertas indefinidamente y podria impedir que Neon escale a cero.
+- Con varias instancias (por ejemplo, escalado horizontal en Render), el maximo total es `instancias x DB_POOL_MAX`. Con el pooler de Neon (hasta 10.000 clientes) no es un limite practico.
+
 ## Migraciones / Uso de pgvector
 
 Para usar pgvector y tener la columna `embedding` (tipo `vector(1536)`) en la tabla `sales_materials` ejecuta la migración TypeORM incluida. Usamos migraciones porque:
