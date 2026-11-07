@@ -512,6 +512,24 @@ export class DiscussionService {
 		return this.sanitizeDiscussionAssignees(discussion);
 	}
 
+	/**
+	 * Valida membership ACTIVE y que la Discussion exista en la organizacion, devolviendo solo sus
+	 * columnas (sin relaciones ni estado de lectura). Mismos errores que `findDiscussionByIdForUser`
+	 * para operaciones que no necesitan la Discussion hidratada.
+	 */
+	async requireDiscussionForUser(
+		organizationId: string,
+		id: string,
+		user: User,
+	): Promise<Discussion> {
+		await this.orgAccessService.requireActiveMembership(user.id, organizationId);
+		const discussion = await this.discussionRepository.findOne({
+			where: { id, organizationId },
+		});
+		if (!discussion) throw new NotFoundException('Discussion not found');
+		return discussion;
+	}
+
 	async findDiscussionByIdForUser(
 		organizationId: string,
 		id: string,
