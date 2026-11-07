@@ -62,7 +62,8 @@ export class DiscussionContextService {
 			relations: [relation],
 		});
 		if (!discussion) throw new NotFoundException('Discussion not found');
-		return new Set((discussion[relation] ?? []).map((item) => item.id));
+		const related: Array<{ id: string }> = discussion[relation] ?? [];
+		return new Set(related.map((item) => item.id));
 	}
 
 	/**
