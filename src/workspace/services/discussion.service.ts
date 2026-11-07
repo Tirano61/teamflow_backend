@@ -106,38 +106,10 @@ export class DiscussionService {
 		};
 	}
 
-	private async resolveEntitiesByIds<T extends { id: string; organizationId: string }>(
-		organizationId: string,
-		ids: string[],
-		repository: Repository<T>,
-		entityName: string,
-	): Promise<T[]> {
-		if (!ids.length) return [];
-
-		const uniqueIds = [...new Set(ids)];
-		if (uniqueIds.length !== ids.length) {
-			throw new BadRequestException(`${entityName} ids contain duplicates`);
-		}
-
-		const entities = await repository.findBy({
-			id: In(uniqueIds),
-			organizationId,
-		} as unknown as Parameters<Repository<T>['findBy']>[0]);
-
-		if (entities.length !== uniqueIds.length) {
-			const foundIds = new Set(entities.map((entity) => entity.id));
-			const missingIds = uniqueIds.filter((id) => !foundIds.has(id));
-			throw new NotFoundException(`${entityName} not found: ${missingIds.join(', ')}`);
-		}
-
-		const mapById = new Map(entities.map((entity) => [entity.id, entity]));
-		return uniqueIds.map((id) => mapById.get(id)!);
-	}
-
 	/**
 	 * Valida en una sola consulta (UNION ALL) que los ids de modulos, componentes y tags existan
-	 * en la organizacion. Equivale a llamar `resolveEntitiesByIds` para cada grupo, con los mismos
-	 * errores y en el mismo orden (Module, Component, Tag), pero en un unico viaje a la base.
+	 * en la organizacion. Reemplaza a una consulta `findBy({ id: In(ids), organizationId })` por
+	 * grupo, con los mismos errores y en el mismo orden (Module, Component, Tag).
 	 */
 	private async assertContextIdsBelongToOrganization(
 		manager: EntityManager,
@@ -367,23 +339,13 @@ export class DiscussionService {
 			dto.initialMessageContent,
 		);
 
+		// Validacion de contexto en una sola consulta y antes de abrir la transaccion (lectura sin
+		// bloqueo, como la que antes se hacia dentro): la transaccion solo contiene escrituras.
+		await this.assertContextIdsBelongToOrganization(this.dataSource.manager, organizationId, dto);
+
 		const discussionId = await this.dataSource.transaction(async (manager) => {
 			const discussionRepository = manager.getRepository(Discussion);
-			const workModuleRepository = manager.getRepository(WorkModule);
-			const componentRepository = manager.getRepository(Component);
 			const discussionMessageRepository = manager.getRepository(DiscussionMessage);
-			const tagRepository = manager.getRepository(Tag);
-
-			const [workModules, components, tags] = await Promise.all([
-				this.resolveEntitiesByIds(organizationId, dto.moduleIds ?? [], workModuleRepository, 'Module'),
-				this.resolveEntitiesByIds(
-					organizationId,
-					dto.componentIds ?? [],
-					componentRepository,
-					'Component',
-				),
-				this.resolveEntitiesByIds(organizationId, dto.tagIds ?? [], tagRepository, 'Tag'),
-			]);
 
 			const discussion = discussionRepository.create({
 				organizationId,
@@ -392,9 +354,9 @@ export class DiscussionService {
 				title,
 				status: DiscussionStatus.NEW,
 				createdBy: { id: user.id } as User,
-				workModules,
-				components,
-				tags,
+				workModules: (dto.moduleIds ?? []).map((id) => ({ id }) as WorkModule),
+				components: (dto.componentIds ?? []).map((id) => ({ id }) as Component),
+				tags: (dto.tagIds ?? []).map((id) => ({ id }) as Tag),
 			});
 
 			const saved = await discussionRepository.save(discussion);
@@ -411,7 +373,12 @@ export class DiscussionService {
 			return saved.id;
 		});
 
-		const discussion = await this.findDiscussionByIdForUser(organizationId, discussionId, user);
+		// La membership ACTIVE ya se valido al inicio de esta misma operacion.
+		const discussion = await this.findHydratedDiscussionForMember(
+			organizationId,
+			discussionId,
+			user.id,
+		);
 
 		try {
 			await this.workflowNotificationService.notifyDiscussionCreated(discussion, user);
@@ -570,11 +537,24 @@ export class DiscussionService {
 		user: User,
 	): Promise<Discussion> {
 		await this.orgAccessService.requireActiveMembership(user.id, organizationId);
+		return this.findHydratedDiscussionForMember(organizationId, id, user.id);
+	}
+
+	/**
+	 * Discussion con relaciones e `isUnread` para `userId`, SIN validar membership: solo para
+	 * llamadores que ya validaron la membership ACTIVE de ese usuario en `organizationId` dentro de
+	 * la misma operacion. La consulta sigue acotada por organizacion.
+	 */
+	private async findHydratedDiscussionForMember(
+		organizationId: string,
+		id: string,
+		userId: string,
+	): Promise<Discussion> {
 		const discussion = await this.findDiscussionById(organizationId, id);
 		const unreadByDiscussionId = await this.findUnreadByDiscussionIds(
 			organizationId,
 			[id],
-			user.id,
+			userId,
 		);
 		discussion.isUnread = unreadByDiscussionId.get(id) ?? false;
 		return discussion;
