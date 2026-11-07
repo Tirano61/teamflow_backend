@@ -138,10 +138,14 @@ export class DiscussionService {
 		organizationId: string,
 		id: string,
 	): Promise<Discussion | null> {
-		return this.discussionRepository.findOne({
+		// `find` en lugar de `findOne`: con relaciones, el `take: 1` de `findOne` obliga a TypeORM
+		// a emitir antes un `SELECT DISTINCT` de ids (un viaje extra). `id` es la clave primaria,
+		// por lo que el resultado tiene como maximo una Discussion.
+		const [discussion] = await this.discussionRepository.find({
 			where: { id, organizationId },
 			relations: ['createdBy', 'workModules', 'components', 'tags', 'assignedDevelopers'],
 		});
+		return discussion ?? null;
 	}
 
 	private parseRawBoolean(value: unknown): boolean {
