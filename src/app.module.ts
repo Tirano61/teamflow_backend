@@ -11,6 +11,7 @@ import { FirebaseModule } from './firebase/firebase.module';
 import { MeModule } from './me/me.module';
 import { UsersModule } from './users/users.module';
 import { SecurityVerificationsModule } from './security_verifications/security-verifications.module';
+import { buildDatabasePoolOptions } from './config/database-pool.config';
 
 @Module({
 	imports: [
@@ -37,7 +38,7 @@ import { SecurityVerificationsModule } from './security_verifications/security-v
 						}),
 					autoLoadEntities: true,
 					synchronize: true,
-					extra: {},
+					extra: buildDatabasePoolOptions(configService),
 				};
 			},
 		}),
