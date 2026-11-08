@@ -144,16 +144,16 @@ export class DiscussionMessageService {
 		dto: DiscussionMessageCreateDto,
 		user: User,
 	): Promise<DiscussionMessage> {
-		await this.discussionService.findDiscussionByIdForUser(
+		const discussion = await this.discussionService.requireDiscussionForUser(
 			organizationId,
 			discussionId,
 			user,
 		);
 		this.assertTextMessageType(dto.type);
 
-		const message = this.discussionMessageRepository.create({
-			discussion: { id: discussionId } as Discussion,
-			author: { id: user.id } as User,
+		const hydratedMessage = this.discussionMessageRepository.create({
+			discussion,
+			author: user,
 			type: DiscussionMessageType.TEXT,
 			content: this.normalizeMessageContent(dto.content),
 			fileUrl: null,
@@ -163,17 +163,17 @@ export class DiscussionMessageService {
 			cloudinaryPublicId: null,
 		});
 
-		const saved = await this.discussionMessageRepository.save(message);
+		// Un unico INSERT (atomico por si solo): `save()` lo envolvia en START TRANSACTION/COMMIT.
+		// TypeORM completa id, createdAt y updatedAt en la entidad a partir del RETURNING.
+		await this.discussionMessageRepository.insert(hydratedMessage);
 		await this.discussionService.upsertDiscussionReadState(
 			organizationId,
 			discussionId,
 			user.id,
 		);
-		const hydratedMessage = await this.findDiscussionMessageById(
-			organizationId,
-			discussionId,
-			saved.id,
-		);
+		// La respuesta se arma sin recargar el mensaje: `author` es el usuario autenticado (mismas
+		// columnas que la relacion; `password` es select: false) y `discussion` son las columnas
+		// recien leidas, que insertar un mensaje no modifica.
 
 		try {
 			await this.workflowNotificationService.notifyDiscussionMessageCreated(

@@ -88,13 +88,17 @@ export class MembershipsService {
 	) {}
 
 	async findMembership(userId: string, organizationId: string): Promise<Membership | null> {
-		return this.membershipRepository.findOne({
+		// `find` en lugar de `findOne`: con relaciones, el `take: 1` de `findOne` obliga a TypeORM
+		// a emitir una consulta previa `SELECT DISTINCT` de ids (un viaje extra a la base).
+		// `uq_memberships_user_organization` garantiza como maximo una fila.
+		const [membership] = await this.membershipRepository.find({
 			where: {
 				user: { id: userId },
 				organization: { id: organizationId },
 			},
 			relations: ['user', 'organization'],
 		});
+		return membership ?? null;
 	}
 
 	async requireMembership(userId: string, organizationId: string): Promise<Membership> {

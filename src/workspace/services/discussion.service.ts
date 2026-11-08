@@ -106,42 +106,63 @@ export class DiscussionService {
 		};
 	}
 
-	private async resolveEntitiesByIds<T extends { id: string; organizationId: string }>(
+	/**
+	 * Valida en una sola consulta (UNION ALL) que los ids de modulos, componentes y tags existan
+	 * en la organizacion. Reemplaza a una consulta `findBy({ id: In(ids), organizationId })` por
+	 * grupo, con los mismos errores y en el mismo orden (Module, Component, Tag).
+	 */
+	private async assertContextIdsBelongToOrganization(
+		manager: EntityManager,
 		organizationId: string,
-		ids: string[],
-		repository: Repository<T>,
-		entityName: string,
-	): Promise<T[]> {
-		if (!ids.length) return [];
+		request: { moduleIds?: string[]; componentIds?: string[]; tagIds?: string[] },
+	): Promise<void> {
+		const groups = [
+			{ entityName: 'Module', target: WorkModule, ids: request.moduleIds ?? [] },
+			{ entityName: 'Component', target: Component, ids: request.componentIds ?? [] },
+			{ entityName: 'Tag', target: Tag, ids: request.tagIds ?? [] },
+		].filter((group) => group.ids.length > 0);
+		if (!groups.length) return;
 
-		const uniqueIds = [...new Set(ids)];
-		if (uniqueIds.length !== ids.length) {
-			throw new BadRequestException(`${entityName} ids contain duplicates`);
-		}
+		const driver = manager.connection.driver;
+		const parameters: unknown[] = [organizationId];
+		const selects = groups.map((group, index) => {
+			const metadata = manager.connection.getMetadata(group.target);
+			const organizationColumn = metadata.findColumnWithPropertyName('organizationId')!.databaseName;
+			parameters.push([...new Set(group.ids)]);
+			return `SELECT ${index} AS "group", id FROM ${driver.escape(metadata.tableName)} WHERE ${driver.escape(organizationColumn)} = $1 AND id = ANY($${parameters.length}::uuid[])`;
+		});
 
-		const entities = await repository.findBy({
-			id: In(uniqueIds),
-			organizationId,
-		} as unknown as Parameters<Repository<T>['findBy']>[0]);
+		const rows: Array<{ group: number; id: string }> = await manager.query(
+			selects.join(' UNION ALL '),
+			parameters,
+		);
+		const foundIdsByGroup = groups.map(() => new Set<string>());
+		for (const row of rows) foundIdsByGroup[Number(row.group)].add(row.id);
 
-		if (entities.length !== uniqueIds.length) {
-			const foundIds = new Set(entities.map((entity) => entity.id));
-			const missingIds = uniqueIds.filter((id) => !foundIds.has(id));
-			throw new NotFoundException(`${entityName} not found: ${missingIds.join(', ')}`);
-		}
-
-		const mapById = new Map(entities.map((entity) => [entity.id, entity]));
-		return uniqueIds.map((id) => mapById.get(id)!);
+		groups.forEach((group, index) => {
+			const uniqueIds = [...new Set(group.ids)];
+			if (uniqueIds.length !== group.ids.length) {
+				throw new BadRequestException(`${group.entityName} ids contain duplicates`);
+			}
+			const missingIds = uniqueIds.filter((id) => !foundIdsByGroup[index].has(id));
+			if (missingIds.length) {
+				throw new NotFoundException(`${group.entityName} not found: ${missingIds.join(', ')}`);
+			}
+		});
 	}
 
 	private async findDiscussionWithRelations(
 		organizationId: string,
 		id: string,
 	): Promise<Discussion | null> {
-		return this.discussionRepository.findOne({
+		// `find` en lugar de `findOne`: con relaciones, el `take: 1` de `findOne` obliga a TypeORM
+		// a emitir antes un `SELECT DISTINCT` de ids (un viaje extra). `id` es la clave primaria,
+		// por lo que el resultado tiene como maximo una Discussion.
+		const [discussion] = await this.discussionRepository.find({
 			where: { id, organizationId },
 			relations: ['createdBy', 'workModules', 'components', 'tags', 'assignedDevelopers'],
 		});
+		return discussion ?? null;
 	}
 
 	private parseRawBoolean(value: unknown): boolean {
@@ -265,17 +286,6 @@ export class DiscussionService {
 		return discussions.map((discussion) => this.sanitizeDiscussionAssignees(discussion));
 	}
 
-	private hasDifferentEntityIds(
-		current: Array<{ id: string }> | undefined,
-		next: Array<{ id: string }> | undefined,
-	): boolean {
-		const currentIds = new Set((current ?? []).map((item) => item.id));
-		const nextIds = new Set((next ?? []).map((item) => item.id));
-
-		if (currentIds.size !== nextIds.size) return true;
-		return [...currentIds].some((id) => !nextIds.has(id));
-	}
-
 	private async resolveAssignableDevelopersByIds(
 		organizationId: string,
 		ids: string[],
@@ -323,29 +333,19 @@ export class DiscussionService {
 		dto: DiscussionCreateDto,
 		user: User,
 	): Promise<Discussion> {
-		await this.orgAccessService.requireActiveMembership(user.id, organizationId);
+		const membership = await this.orgAccessService.requireActiveMembership(user.id, organizationId);
 		const title = this.normalizeTitle(dto.title);
 		const initialMessageContent = this.normalizeInitialMessageContent(
 			dto.initialMessageContent,
 		);
 
+		// Validacion de contexto en una sola consulta y antes de abrir la transaccion (lectura sin
+		// bloqueo, como la que antes se hacia dentro): la transaccion solo contiene escrituras.
+		await this.assertContextIdsBelongToOrganization(this.dataSource.manager, organizationId, dto);
+
 		const discussionId = await this.dataSource.transaction(async (manager) => {
 			const discussionRepository = manager.getRepository(Discussion);
-			const workModuleRepository = manager.getRepository(WorkModule);
-			const componentRepository = manager.getRepository(Component);
 			const discussionMessageRepository = manager.getRepository(DiscussionMessage);
-			const tagRepository = manager.getRepository(Tag);
-
-			const [workModules, components, tags] = await Promise.all([
-				this.resolveEntitiesByIds(organizationId, dto.moduleIds ?? [], workModuleRepository, 'Module'),
-				this.resolveEntitiesByIds(
-					organizationId,
-					dto.componentIds ?? [],
-					componentRepository,
-					'Component',
-				),
-				this.resolveEntitiesByIds(organizationId, dto.tagIds ?? [], tagRepository, 'Tag'),
-			]);
 
 			const discussion = discussionRepository.create({
 				organizationId,
@@ -354,9 +354,9 @@ export class DiscussionService {
 				title,
 				status: DiscussionStatus.NEW,
 				createdBy: { id: user.id } as User,
-				workModules,
-				components,
-				tags,
+				workModules: (dto.moduleIds ?? []).map((id) => ({ id }) as WorkModule),
+				components: (dto.componentIds ?? []).map((id) => ({ id }) as Component),
+				tags: (dto.tagIds ?? []).map((id) => ({ id }) as Tag),
 			});
 
 			const saved = await discussionRepository.save(discussion);
@@ -373,7 +373,12 @@ export class DiscussionService {
 			return saved.id;
 		});
 
-		const discussion = await this.findDiscussionByIdForUser(organizationId, discussionId, user);
+		// Reutiliza la membership ACTIVE validada al inicio de esta misma operacion.
+		const discussion = await this.findDiscussionByIdForMembership(
+			organizationId,
+			discussionId,
+			membership,
+		);
 
 		try {
 			await this.workflowNotificationService.notifyDiscussionCreated(discussion, user);
@@ -508,17 +513,56 @@ export class DiscussionService {
 		return this.sanitizeDiscussionAssignees(discussion);
 	}
 
-	async findDiscussionByIdForUser(
+	/**
+	 * Valida membership ACTIVE y que la Discussion exista en la organizacion, devolviendo solo sus
+	 * columnas (sin relaciones ni estado de lectura). Mismos errores que `findDiscussionByIdForUser`
+	 * para operaciones que no necesitan la Discussion hidratada.
+	 */
+	async requireDiscussionForUser(
 		organizationId: string,
 		id: string,
 		user: User,
 	): Promise<Discussion> {
 		await this.orgAccessService.requireActiveMembership(user.id, organizationId);
+		const discussion = await this.discussionRepository.findOne({
+			where: { id, organizationId },
+		});
+		if (!discussion) throw new NotFoundException('Discussion not found');
+		return discussion;
+	}
+
+	async findDiscussionByIdForUser(
+		organizationId: string,
+		id: string,
+		user: User,
+	): Promise<Discussion> {
+		const membership = await this.orgAccessService.requireActiveMembership(user.id, organizationId);
+		return this.findDiscussionByIdForMembership(organizationId, id, membership);
+	}
+
+	/**
+	 * Igual que `findDiscussionByIdForUser`, pero reutiliza la membership que el llamador ya
+	 * obtuvo con `requireActiveMembership` en la misma operacion, en lugar de volver a consultarla.
+	 * Rechaza una membership que no este ACTIVE o que sea de otra organizacion.
+	 */
+	async findDiscussionByIdForMembership(
+		organizationId: string,
+		id: string,
+		membership: Membership,
+	): Promise<Discussion> {
+		if (
+			membership.status !== MembershipStatus.ACTIVE ||
+			membership.organization?.id !== organizationId ||
+			!membership.user?.id
+		) {
+			throw new ForbiddenException('Membership is not active');
+		}
+
 		const discussion = await this.findDiscussionById(organizationId, id);
 		const unreadByDiscussionId = await this.findUnreadByDiscussionIds(
 			organizationId,
 			[id],
-			user.id,
+			membership.user.id,
 		);
 		discussion.isUnread = unreadByDiscussionId.get(id) ?? false;
 		return discussion;
@@ -549,70 +593,105 @@ export class DiscussionService {
 		let didChangeContext = false;
 		const membership = await this.orgAccessService.requireActiveMembership(user.id, organizationId);
 
-		const discussionId = await this.dataSource.transaction(async (manager) => {
-			const discussionRepository = manager.getRepository(Discussion);
-			const workModuleRepository = manager.getRepository(WorkModule);
-			const componentRepository = manager.getRepository(Component);
-			const tagRepository = manager.getRepository(Tag);
-
-			const discussion = await discussionRepository.findOne({
-				where: { id, organizationId },
-				relations: ['createdBy', 'workModules', 'components', 'tags'],
-			});
-
-			if (!discussion) throw new NotFoundException('Discussion not found');
-			this.assertCanEditDiscussion(user, discussion, membership);
-
-			if (dto.title !== undefined) {
-				discussion.title = this.normalizeTitle(dto.title);
-			}
-
-			if (dto.type !== undefined) {
-				discussion.type = dto.type;
-			}
-
-			if (dto.moduleIds !== undefined || dto.componentIds !== undefined || dto.tagIds !== undefined) {
-				this.assertCanManageDiscussion(membership);
-			}
-
-			if (dto.moduleIds !== undefined) {
-				const nextModules = await this.resolveEntitiesByIds(
-					organizationId,
-					dto.moduleIds,
-					workModuleRepository,
-					'Module',
-				);
-				didChangeContext =
-					didChangeContext || this.hasDifferentEntityIds(discussion.workModules, nextModules);
-				discussion.workModules = nextModules;
-			}
-
-			if (dto.componentIds !== undefined) {
-				const nextComponents = await this.resolveEntitiesByIds(
-					organizationId,
-					dto.componentIds,
-					componentRepository,
-					'Component',
-				);
-				didChangeContext =
-					didChangeContext || this.hasDifferentEntityIds(discussion.components, nextComponents);
-				discussion.components = nextComponents;
-			}
-
-			if (dto.tagIds !== undefined) {
-				discussion.tags = await this.resolveEntitiesByIds(
-					organizationId,
-					dto.tagIds,
-					tagRepository,
-					'Tag',
-				);
-				didChangeContext = true;
-			}
-
-			await discussionRepository.save(discussion);
-			return discussion.id;
+		// Lectura sin bloqueo (READ COMMITTED), igual que la que antes se hacia dentro de la
+		// transaccion: el estado actual solo se usa para permisos y para calcular las diferencias.
+		const [discussion] = await this.discussionRepository.find({
+			where: { id, organizationId },
+			relations: ['createdBy', 'workModules', 'components', 'tags'],
 		});
 
+		if (!discussion) throw new NotFoundException('Discussion not found');
+		this.assertCanEditDiscussion(user, discussion, membership);
+
+		// Mismo criterio que `save()`: solo se escriben las columnas cuyo valor cambia, y solo esas
+		// escrituras actualizan `updated_at` (cambiar unicamente relaciones no lo modifica).
+		const columnChanges: Partial<Pick<Discussion, 'title' | 'type'>> = {};
+		if (dto.title !== undefined) {
+			const title = this.normalizeTitle(dto.title);
+			if (title !== discussion.title) columnChanges.title = title;
+		}
+
+		if (dto.type !== undefined && dto.type !== discussion.type) {
+			columnChanges.type = dto.type;
+		}
+
+		if (dto.moduleIds !== undefined || dto.componentIds !== undefined || dto.tagIds !== undefined) {
+			this.assertCanManageDiscussion(membership);
+		}
+
+		await this.assertContextIdsBelongToOrganization(this.dataSource.manager, organizationId, dto);
+
+		const relationChanges: Array<{
+			relation: 'workModules' | 'components' | 'tags';
+			added: string[];
+			removed: string[];
+		}> = [];
+		const collectRelationChange = (
+			relation: 'workModules' | 'components' | 'tags',
+			current: Array<{ id: string }>,
+			nextIds: string[],
+		): boolean => {
+			const currentIds = new Set(current.map((item) => item.id));
+			const nextIdSet = new Set(nextIds);
+			const added = [...nextIdSet].filter((relatedId) => !currentIds.has(relatedId));
+			const removed = [...currentIds].filter((relatedId) => !nextIdSet.has(relatedId));
+			if (!added.length && !removed.length) return false;
+			relationChanges.push({ relation, added, removed });
+			return true;
+		};
+
+		if (dto.moduleIds !== undefined) {
+			didChangeContext =
+				collectRelationChange('workModules', discussion.workModules ?? [], dto.moduleIds) ||
+				didChangeContext;
+		}
+
+		if (dto.componentIds !== undefined) {
+			didChangeContext =
+				collectRelationChange('components', discussion.components ?? [], dto.componentIds) ||
+				didChangeContext;
+		}
+
+		if (dto.tagIds !== undefined) {
+			collectRelationChange('tags', discussion.tags ?? [], dto.tagIds);
+			didChangeContext = true;
+		}
+
+		// Escrituras dirigidas (UPDATE de columnas e INSERT/DELETE en las tablas intermedias) en
+		// lugar de `save()`, que recargaba la Discussion y sus relaciones antes de escribir.
+		// Si hay mas de una sentencia se ejecutan juntas en una transaccion; una sola es atomica.
+		const writes: Array<(manager: EntityManager) => Promise<unknown>> = [];
+		if (Object.keys(columnChanges).length) {
+			writes.push((manager) =>
+				manager
+					.createQueryBuilder()
+					.update(Discussion)
+					.set(columnChanges)
+					.where('id = :id', { id })
+					.andWhere('organization_id = :organizationId', { organizationId })
+					.execute(),
+			);
+		}
+		for (const change of relationChanges) {
+			const relationQuery = (manager: EntityManager) =>
+				manager.createQueryBuilder().relation(Discussion, change.relation).of(id);
+			if (change.removed.length) {
+				writes.push((manager) => relationQuery(manager).remove(change.removed));
+			}
+			if (change.added.length) {
+				writes.push((manager) => relationQuery(manager).add(change.added));
+			}
+		}
+
+		if (writes.length > 1) {
+			await this.dataSource.transaction(async (manager) => {
+				for (const write of writes) await write(manager);
+			});
+		} else if (writes.length === 1) {
+			await writes[0](this.dataSource.manager);
+		}
+
+		const discussionId = discussion.id;
 		const updatedDiscussion = await this.findDiscussionById(organizationId, discussionId);
 
 		if (didChangeContext) {
@@ -642,13 +721,18 @@ export class DiscussionService {
 		const membership = await this.orgAccessService.requireActiveMembership(user.id, organizationId);
 		this.assertCanManageDiscussion(membership);
 
-		const discussion = await this.discussionRepository.findOne({
-			where: { id, organizationId },
-		});
-		if (!discussion) throw new NotFoundException('Discussion not found');
-
-		discussion.status = status;
-		await this.discussionRepository.save(discussion);
+		// Un unico UPDATE acotado por organizacion. Solo escribe (y actualiza `updated_at`) si el
+		// status cambia, igual que `save()`, que no emitia UPDATE cuando el valor era el mismo.
+		// Si la Discussion no existe en esta organizacion no afecta filas y la lectura siguiente
+		// responde 404, como antes.
+		await this.discussionRepository
+			.createQueryBuilder()
+			.update(Discussion)
+			.set({ status })
+			.where('id = :id', { id })
+			.andWhere('organization_id = :organizationId', { organizationId })
+			.andWhere('status <> :status', { status })
+			.execute();
 
 		const updatedDiscussion = await this.findDiscussionById(organizationId, id);
 
