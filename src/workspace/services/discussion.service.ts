@@ -269,6 +269,70 @@ export class DiscussionService {
 		);
 	}
 
+	/**
+	 * Ultima actividad de la Discussion `d` (misma expresion que `buildUnreadConditionSql`).
+	 * Fragmento SQL para las sentencias que mantienen leidos los cambios propios.
+	 */
+	private static activityAtSql(): string {
+		return 'GREATEST(d.updated_at, COALESCE((SELECT MAX(m.created_at) FROM public.discussion_messages m WHERE m.discussion_id = d.id), d.created_at))';
+	}
+
+	/**
+	 * UPDATE de `title`/`type`/`status` hecho por `actorId`, en una sola sentencia que ademas evita
+	 * que el propio cambio deje la Discussion no leida para el actor:
+	 * - bloquea la fila y toma la ultima actividad previa al cambio;
+	 * - escribe solo si algun valor cambia (y solo entonces actualiza `updated_at`);
+	 * - mueve `last_read_at` del actor hasta el nuevo `updated_at` solo si ya habia leido toda la
+	 *   actividad previa. Si habia cambios o mensajes de terceros sin leer, no los oculta.
+	 * El resto de los usuarios no se toca: el cambio sigue siendo actividad no leida para ellos.
+	 */
+	private async updateColumnsAsActor(
+		manager: EntityManager,
+		organizationId: string,
+		discussionId: string,
+		actorId: string,
+		changes: Partial<Pick<Discussion, 'title' | 'type' | 'status'>>,
+	): Promise<void> {
+		const columnByProperty = { title: 'title', type: 'type', status: 'status' } as const;
+		const parameters: unknown[] = [discussionId, organizationId, actorId];
+		const assignments: string[] = [];
+		const differences: string[] = [];
+		for (const property of Object.keys(columnByProperty) as Array<keyof typeof columnByProperty>) {
+			if (changes[property] === undefined) continue;
+			parameters.push(changes[property]);
+			const column = columnByProperty[property];
+			assignments.push(`${column} = $${parameters.length}`);
+			differences.push(`d.${column} IS DISTINCT FROM $${parameters.length}`);
+		}
+		if (!assignments.length) return;
+
+		await manager.query(
+			`
+				WITH target AS (
+					SELECT d.id, ${DiscussionService.activityAtSql()} AS previous_activity_at
+					FROM public.discussions d
+					WHERE d.id = $1 AND d.organization_id = $2
+					FOR UPDATE
+				),
+				changed AS (
+					UPDATE public.discussions d
+					SET ${assignments.join(', ')}, updated_at = now()
+					FROM target
+					WHERE d.id = target.id AND (${differences.join(' OR ')})
+					RETURNING d.id, d.updated_at
+				)
+				UPDATE public.discussion_read_states rs
+				SET last_read_at = changed.updated_at, updated_at = now()
+				FROM changed, target
+				WHERE rs.discussion_id = changed.id
+					AND rs.user_id = $3
+					AND rs.last_read_at >= target.previous_activity_at
+					AND rs.last_read_at < changed.updated_at
+			`,
+			parameters,
+		);
+	}
+
 	private sanitizeDiscussionAssignees(discussion: Discussion): Discussion {
 		discussion.assignedDevelopers = (discussion.assignedDevelopers ?? []).map(
 			(developer) =>
@@ -663,13 +727,7 @@ export class DiscussionService {
 		const writes: Array<(manager: EntityManager) => Promise<unknown>> = [];
 		if (Object.keys(columnChanges).length) {
 			writes.push((manager) =>
-				manager
-					.createQueryBuilder()
-					.update(Discussion)
-					.set(columnChanges)
-					.where('id = :id', { id })
-					.andWhere('organization_id = :organizationId', { organizationId })
-					.execute(),
+				this.updateColumnsAsActor(manager, organizationId, id, user.id, columnChanges),
 			);
 		}
 		for (const change of relationChanges) {
@@ -721,18 +779,14 @@ export class DiscussionService {
 		const membership = await this.orgAccessService.requireActiveMembership(user.id, organizationId);
 		this.assertCanManageDiscussion(membership);
 
-		// Un unico UPDATE acotado por organizacion. Solo escribe (y actualiza `updated_at`) si el
-		// status cambia, igual que `save()`, que no emitia UPDATE cuando el valor era el mismo.
+		// Una unica sentencia acotada por organizacion. Solo escribe (y actualiza `updated_at`) si el
+		// status cambia, igual que `save()`, que no emitia UPDATE cuando el valor era el mismo, y
+		// mantiene leida la Discussion para el actor (ver `updateColumnsAsActor`).
 		// Si la Discussion no existe en esta organizacion no afecta filas y la lectura siguiente
 		// responde 404, como antes.
-		await this.discussionRepository
-			.createQueryBuilder()
-			.update(Discussion)
-			.set({ status })
-			.where('id = :id', { id })
-			.andWhere('organization_id = :organizationId', { organizationId })
-			.andWhere('status <> :status', { status })
-			.execute();
+		await this.updateColumnsAsActor(this.dataSource.manager, organizationId, id, user.id, {
+			status,
+		});
 
 		const updatedDiscussion = await this.findDiscussionById(organizationId, id);
 
