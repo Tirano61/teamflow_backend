@@ -166,10 +166,11 @@ export class DiscussionMessageService {
 		// Un unico INSERT (atomico por si solo): `save()` lo envolvia en START TRANSACTION/COMMIT.
 		// TypeORM completa id, createdAt y updatedAt en la entidad a partir del RETURNING.
 		await this.discussionMessageRepository.insert(hydratedMessage);
-		await this.discussionService.upsertDiscussionReadState(
+		await this.discussionService.keepReadAfterOwnMessage(
 			organizationId,
 			discussionId,
 			user.id,
+			hydratedMessage.id,
 		);
 		// La respuesta se arma sin recargar el mensaje: `author` es el usuario autenticado (mismas
 		// columnas que la relacion; `password` es select: false) y `discussion` son las columnas
@@ -243,10 +244,11 @@ export class DiscussionMessageService {
 		let saved: DiscussionMessage;
 		try {
 			saved = await this.discussionMessageRepository.save(message);
-			await this.discussionService.upsertDiscussionReadState(
+			await this.discussionService.keepReadAfterOwnMessage(
 				organizationId,
 				discussionId,
 				user.id,
+				saved.id,
 			);
 		} catch (error) {
 			await this.cloudinaryService

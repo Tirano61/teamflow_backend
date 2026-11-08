@@ -270,11 +270,43 @@ export class DiscussionService {
 	}
 
 	/**
-	 * Ultima actividad de la Discussion `d` (misma expresion que `buildUnreadConditionSql`).
-	 * Fragmento SQL para las sentencias que mantienen leidos los cambios propios.
+	 * Ultima actividad de la Discussion `d` (misma expresion que `buildUnreadConditionSql`),
+	 * opcionalmente sin contar un mensaje. Fragmento SQL para las sentencias que mantienen leidos
+	 * los cambios propios.
 	 */
-	private static activityAtSql(): string {
-		return 'GREATEST(d.updated_at, COALESCE((SELECT MAX(m.created_at) FROM public.discussion_messages m WHERE m.discussion_id = d.id), d.created_at))';
+	private static activityAtSql(excludedMessageIdSql?: string): string {
+		const excludeMessage = excludedMessageIdSql ? ` AND m.id <> ${excludedMessageIdSql}` : '';
+		return `GREATEST(d.updated_at, COALESCE((SELECT MAX(m.created_at) FROM public.discussion_messages m WHERE m.discussion_id = d.id${excludeMessage}), d.created_at))`;
+	}
+
+	/**
+	 * Mantiene leida la Discussion para el autor de un mensaje recien creado: mueve `last_read_at`
+	 * hasta el `created_at` de ese mensaje (reloj de la base) solo si, sin contarlo, el autor ya
+	 * estaba al dia. Si habia actividad que el autor no habia leido (por ejemplo, un mensaje de otro
+	 * usuario), no la oculta: la Discussion sigue no leida. Sin read-state previo ("nunca leida")
+	 * tampoco se crea uno.
+	 */
+	async keepReadAfterOwnMessage(
+		organizationId: string,
+		discussionId: string,
+		userId: string,
+		messageId: string,
+	): Promise<void> {
+		await this.dataSource.manager.query(
+			`
+				UPDATE public.discussion_read_states rs
+				SET last_read_at = own.created_at, updated_at = now()
+				FROM public.discussions d
+				JOIN public.discussion_messages own ON own.id = $3 AND own.discussion_id = d.id
+				WHERE d.id = $1
+					AND d.organization_id = $4
+					AND rs.discussion_id = d.id
+					AND rs.user_id = $2
+					AND rs.last_read_at < own.created_at
+					AND rs.last_read_at >= ${DiscussionService.activityAtSql('own.id')}
+			`,
+			[discussionId, userId, messageId, organizationId],
+		);
 	}
 
 	/**
