@@ -342,7 +342,7 @@ Orden de evaluacion de errores:
 
 ### POST /organizations/:organizationId/workspace/discussions
 - Auth: Membership ACTIVE (cualquier role)
-- Descripcion: Crea una discussion con estado inicial NEW y createdBy tomado del token. Requiere initialMessageContent y crea el primer DiscussionMessage de tipo TEXT en la misma transaccion. El creador queda marcado como leido.
+- Descripcion: Crea una discussion con estado inicial NEW y createdBy tomado del token. Requiere initialMessageContent y crea el primer DiscussionMessage de tipo TEXT en la misma transaccion. El creador queda marcado como leido hasta `createdAt` de la discussion (ver "Read State / Unread").
 - Body:
 ```json
 {
@@ -416,6 +416,7 @@ Orden de evaluacion de errores:
   "tagIds": ["{{tagId}}"]
 }
 ```
+- Si cambia `title` o `type`, el cambio no deja la discussion no leida para quien lo hizo (si ya estaba al dia); para el resto de los usuarios es actividad nueva. Ver "Read State / Unread".
 - Respuesta 200: la discussion actualizada con sus relaciones (sin `isUnread`).
 - Errores (en este orden):
   - 403 sin Membership `ACTIVE`
@@ -426,7 +427,7 @@ Orden de evaluacion de errores:
 
 ### PATCH /organizations/:organizationId/workspace/discussions/:id/status
 - Auth: Membership ACTIVE + OWNER/ADMIN/DEVELOPER
-- Descripcion: Cambia el estado Kanban de la discussion. No impone flujo lineal de transicion.
+- Descripcion: Cambia el estado Kanban de la discussion. No impone flujo lineal de transicion. Si el status cambia, no deja la discussion no leida para quien lo cambio (si ya estaba al dia); para el resto de los usuarios es actividad nueva. Ver "Read State / Unread".
 - Body:
 ```json
 {
@@ -537,7 +538,7 @@ Crear y listar mensajes requiere Membership ACTIVE con cualquier role. Editar y 
 
 ### POST /organizations/:organizationId/workspace/discussions/:discussionId/messages
 - Auth: Membership ACTIVE (cualquier role)
-- Descripcion: Crea un mensaje TEXT dentro de la discussion usando author del token. El autor queda marcado como leido hasta ese momento.
+- Descripcion: Crea un mensaje TEXT dentro de la discussion usando author del token. Si el autor ya habia leido toda la actividad anterior, queda leido hasta `createdAt` de su mensaje; si habia actividad de otros usuarios sin leer, la discussion sigue no leida. Ver "Read State / Unread".
 - Body:
 ```json
 {
@@ -552,7 +553,7 @@ Crear y listar mensajes requiere Membership ACTIVE con cualquier role. Editar y 
 ### POST /organizations/:organizationId/workspace/discussions/:discussionId/messages/files
 - Auth: Membership ACTIVE (cualquier role)
 - Content-Type: multipart/form-data
-- Descripcion: Sube un archivo a Cloudinary y crea un DiscussionMessage de tipo IMAGE, AUDIO, VIDEO o FILE. El autor queda marcado como leido hasta ese momento. Tamano maximo: `WORKSPACE_ATTACHMENT_MAX_FILE_SIZE_BYTES` (default 25 MB).
+- Descripcion: Sube un archivo a Cloudinary y crea un DiscussionMessage de tipo IMAGE, AUDIO, VIDEO o FILE. Estado de lectura del autor: mismo criterio que `POST .../messages`. Tamano maximo: `WORKSPACE_ATTACHMENT_MAX_FILE_SIZE_BYTES` (default 25 MB).
 - Form-data:
   - type (IMAGE | AUDIO | VIDEO | FILE)
   - file (binary)
@@ -1763,7 +1764,14 @@ Unicidad: `(organizationId, normalizedName)`. `normalizedName` es el `name` reco
 - El estado `status` de la discussion (NEW, REVIEW, IN_PROGRESS, RESOLVED) representa flujo de trabajo global y no se usa para leido/no leido.
 - El estado de lectura es por usuario y se guarda en `discussion_read_states` con `lastReadAt`.
 - Si no existe read-state para una discussion+usuario, se interpreta como "nunca leida".
-- `isUnread` se calcula comparando `lastReadAt` contra la ultima actividad de la discussion.
+- `isUnread` se calcula comparando `lastReadAt` contra la ultima actividad de la discussion: `GREATEST(updatedAt, createdAt del ultimo mensaje o, si no hay mensajes, createdAt de la discussion)`. Es no leida si `lastReadAt` es anterior.
 - Actividad nueva considerada en backend:
   - nuevo mensaje (TEXT, IMAGE, AUDIO, VIDEO, FILE);
-  - cualquier actualizacion de la discussion que impacte `updatedAt` (ej: cambios de status, asignaciones, relaciones/contexto, edicion).
+  - cambios que modifican `updatedAt`: `title` o `type` (`PATCH .../discussions/:id`) y `status` (`PATCH .../discussions/:id/status`), solo cuando el valor realmente cambia.
+- No generan actividad (no modifican `updatedAt`): asignaciones (`.../assignments`), cambios de contexto (modules/components/tags, por `PATCH` o por los endpoints de relaciones), editar o eliminar mensajes, y un `PATCH` sin cambios reales.
+- Cambios propios: la actividad que genera un usuario no deja la discussion no leida para ese mismo usuario, sin ocultar actividad de terceros:
+  - Crear una discussion deja al creador leido hasta `createdAt` de la discussion.
+  - Cambiar `title`/`type`/`status` o enviar un mensaje mueve `lastReadAt` del autor hasta el instante de su propio cambio (`updatedAt` resultante o `createdAt` del mensaje), solo si el autor ya habia leido toda la actividad anterior a ese cambio. Si habia actividad de otros usuarios sin leer (mensajes o cambios), `lastReadAt` no se modifica y la discussion sigue no leida.
+  - Si el autor nunca leyo la discussion (sin read-state), su cambio no crea uno.
+  - Para el resto de los usuarios el cambio sigue siendo actividad nueva (no leida), como antes.
+- Los timestamps de los cambios propios salen del reloj de PostgreSQL. `POST .../read` marca leido con la hora del servidor de aplicacion.
