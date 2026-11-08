@@ -280,6 +280,32 @@ export class DiscussionService {
 	}
 
 	/**
+	 * El creador queda leido hasta el instante de creacion, tomado del reloj de la base (el mismo
+	 * que fija `created_at` de la Discussion y de su mensaje inicial en esta transaccion), y no del
+	 * reloj de la aplicacion, que puede estar desfasado respecto de la base.
+	 */
+	private async markCreatorAsRead(
+		manager: EntityManager,
+		organizationId: string,
+		discussionId: string,
+		userId: string,
+	): Promise<void> {
+		await manager.query(
+			`
+				INSERT INTO public.discussion_read_states (discussion_id, user_id, last_read_at)
+				SELECT d.id, $2, ${DiscussionService.activityAtSql()}
+				FROM public.discussions d
+				WHERE d.id = $1 AND d.organization_id = $3
+				ON CONFLICT (discussion_id, user_id)
+				DO UPDATE SET
+					last_read_at = GREATEST(discussion_read_states.last_read_at, EXCLUDED.last_read_at),
+					updated_at = now()
+			`,
+			[discussionId, userId, organizationId],
+		);
+	}
+
+	/**
 	 * Mantiene leida la Discussion para el autor de un mensaje recien creado: mueve `last_read_at`
 	 * hasta el `created_at` de ese mensaje (reloj de la base) solo si, sin contarlo, el autor ya
 	 * estaba al dia. Si habia actividad que el autor no habia leido (por ejemplo, un mensaje de otro
@@ -464,7 +490,7 @@ export class DiscussionService {
 				content: initialMessageContent,
 			});
 			await discussionMessageRepository.save(initialMessage);
-			await this.upsertDiscussionReadState(organizationId, saved.id, user.id, manager);
+			await this.markCreatorAsRead(manager, organizationId, saved.id, user.id);
 
 			return saved.id;
 		});
