@@ -241,31 +241,179 @@ export class DiscussionService {
 		return new Map(rows.map((row) => [row.id, this.parseRawBoolean(row.isUnread)]));
 	}
 
-	async upsertDiscussionReadState(
+	/**
+	 * Marca la Discussion como leida para `userId` hasta su ultima actividad visible (reloj de la
+	 * base), sin retroceder un `last_read_at` posterior. No usa la hora de la aplicacion, que puede
+	 * estar desfasada respecto de la base, ni `now()`: cualquier actividad todavia no confirmada se
+	 * escribe bajo el bloqueo de actividad (ver `withActivityLock`) con una hora posterior a toda la
+	 * actividad ya confirmada, asi que sigue no leida. Devuelve el `last_read_at` resultante, o
+	 * `null` si la Discussion no existe en la organizacion.
+	 */
+	private async markReadUpToCurrentActivity(
+		manager: EntityManager,
 		organizationId: string,
 		discussionId: string,
 		userId: string,
-		manager?: EntityManager,
-		lastReadAt: Date = new Date(),
-	): Promise<void> {
-		const effectiveManager = manager ?? this.dataSource.manager;
-
-		await effectiveManager.query(
+	): Promise<Date | null> {
+		const rows: Array<{ last_read_at: Date }> = await manager.query(
 			`
-				INSERT INTO public.discussion_read_states (
-					discussion_id,
-					user_id,
-					last_read_at
-				)
-				SELECT d.id, $2, $3
+				INSERT INTO public.discussion_read_states (discussion_id, user_id, last_read_at)
+				SELECT d.id, $2, ${DiscussionService.activityAtSql()}
 				FROM public.discussions d
-				WHERE d.id = $1 AND d.organization_id = $4
+				WHERE d.id = $1 AND d.organization_id = $3
 				ON CONFLICT (discussion_id, user_id)
 				DO UPDATE SET
 					last_read_at = GREATEST(discussion_read_states.last_read_at, EXCLUDED.last_read_at),
 					updated_at = now()
+				RETURNING last_read_at
 			`,
-			[discussionId, userId, lastReadAt, organizationId],
+			[discussionId, userId, organizationId],
+		);
+		return rows[0]?.last_read_at ?? null;
+	}
+
+	/**
+	 * Ultima actividad de la Discussion `d`: misma expresion que `buildUnreadConditionSql`.
+	 */
+	private static activityAtSql(): string {
+		return `GREATEST(d.updated_at, COALESCE((SELECT MAX(m.created_at) FROM public.discussion_messages m WHERE m.discussion_id = d.id), d.created_at))`;
+	}
+
+	/**
+	 * Ejecuta `work` en una transaccion que primero bloquea la fila de la Discussion
+	 * (`FOR NO KEY UPDATE`, acotado por organizacion; 404 si no existe en ella). Toda escritura que
+	 * genera actividad (cambio de `title`/`type`/`status`, mensaje nuevo) pasa por aqui, de modo que
+	 * esas escrituras quedan serializadas por Discussion. Como el bloqueo se toma en una sentencia
+	 * previa, las sentencias de `work` (READ COMMITTED) ven toda la actividad confirmada antes, y la
+	 * actividad posterior se escribe despues del COMMIT con una hora mayor. Asi, mantener leido un
+	 * cambio propio nunca oculta actividad de terceros concurrente. No bloquea las inserciones de
+	 * otras tablas que solo referencian la Discussion (FOR KEY SHARE de las claves foraneas).
+	 */
+	async withActivityLock<T>(
+		organizationId: string,
+		discussionId: string,
+		work: (manager: EntityManager, discussion: Discussion) => Promise<T>,
+		manager?: EntityManager,
+	): Promise<T> {
+		const run = async (transactionManager: EntityManager): Promise<T> => {
+			const discussion = await transactionManager.getRepository(Discussion).findOne({
+				where: { id: discussionId, organizationId },
+				lock: { mode: 'for_no_key_update' },
+			});
+			if (!discussion) throw new NotFoundException('Discussion not found');
+			return work(transactionManager, discussion);
+		};
+		return manager ? run(manager) : this.dataSource.transaction(run);
+	}
+
+	/**
+	 * Inserta un mensaje de `authorId` y, en la misma sentencia, mantiene leida la Discussion para el
+	 * autor: mueve su `last_read_at` hasta el `created_at` del mensaje solo si ya habia leido toda la
+	 * actividad anterior (la subconsulta de actividad no ve el INSERT de la misma sentencia, asi que
+	 * no cuenta el propio mensaje). Si habia actividad de terceros sin leer, la Discussion sigue no
+	 * leida; sin read-state previo ("nunca leida") no se crea uno.
+	 * Debe ejecutarse dentro de `withActivityLock`: `created_at` es la hora de esta sentencia,
+	 * posterior a la toma del bloqueo y por lo tanto a toda la actividad ya confirmada.
+	 */
+	async insertMessageAsAuthor(
+		manager: EntityManager,
+		discussionId: string,
+		authorId: string,
+		message: Pick<
+			DiscussionMessage,
+			'type' | 'content' | 'fileUrl' | 'fileName' | 'mimeType' | 'fileSize' | 'cloudinaryPublicId'
+		>,
+	): Promise<{ id: string; createdAt: Date; updatedAt: Date }> {
+		const rows: Array<{ id: string; created_at: Date; updated_at: Date }> = await manager.query(
+			`
+				WITH own AS (
+					INSERT INTO public.discussion_messages (
+						discussion_id, author_id, type, content, file_url, file_name, mime_type, file_size,
+						cloudinary_public_id, created_at, updated_at
+					)
+					VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, statement_timestamp(), statement_timestamp())
+					RETURNING id, created_at, updated_at
+				),
+				author_read AS (
+					UPDATE public.discussion_read_states rs
+					SET last_read_at = own.created_at, updated_at = now()
+					FROM own, public.discussions d
+					WHERE d.id = $1
+						AND rs.discussion_id = d.id
+						AND rs.user_id = $2
+						AND rs.last_read_at < own.created_at
+						AND rs.last_read_at >= ${DiscussionService.activityAtSql()}
+				)
+				SELECT id, created_at, updated_at FROM own
+			`,
+			[
+				discussionId,
+				authorId,
+				message.type,
+				message.content,
+				message.fileUrl,
+				message.fileName,
+				message.mimeType,
+				message.fileSize,
+				message.cloudinaryPublicId,
+			],
+		);
+		const [inserted] = rows;
+		return { id: inserted.id, createdAt: inserted.created_at, updatedAt: inserted.updated_at };
+	}
+
+	/**
+	 * UPDATE de `title`/`type`/`status` hecho por `actorId`, que ademas evita que el propio cambio
+	 * deje la Discussion no leida para el actor. Debe ejecutarse dentro de `withActivityLock`.
+	 * - escribe solo si algun valor cambia (y solo entonces actualiza `updated_at`, con la hora de
+	 *   esta sentencia, posterior a la toma del bloqueo);
+	 * - mueve `last_read_at` del actor hasta el nuevo `updated_at` solo si ya habia leido toda la
+	 *   actividad previa al cambio. Si habia cambios o mensajes de terceros sin leer, no los oculta.
+	 * El resto de los usuarios no se toca: el cambio sigue siendo actividad no leida para ellos.
+	 */
+	private async updateColumnsAsActor(
+		manager: EntityManager,
+		organizationId: string,
+		discussionId: string,
+		actorId: string,
+		changes: Partial<Pick<Discussion, 'title' | 'type' | 'status'>>,
+	): Promise<void> {
+		const columnByProperty = { title: 'title', type: 'type', status: 'status' } as const;
+		const parameters: unknown[] = [discussionId, organizationId, actorId];
+		const assignments: string[] = [];
+		const differences: string[] = [];
+		for (const property of Object.keys(columnByProperty) as Array<keyof typeof columnByProperty>) {
+			if (changes[property] === undefined) continue;
+			parameters.push(changes[property]);
+			const column = columnByProperty[property];
+			assignments.push(`${column} = $${parameters.length}`);
+			differences.push(`d.${column} IS DISTINCT FROM $${parameters.length}`);
+		}
+		if (!assignments.length) return;
+
+		await manager.query(
+			`
+				WITH target AS (
+					SELECT d.id, ${DiscussionService.activityAtSql()} AS previous_activity_at
+					FROM public.discussions d
+					WHERE d.id = $1 AND d.organization_id = $2
+				),
+				changed AS (
+					UPDATE public.discussions d
+					SET ${assignments.join(', ')}, updated_at = statement_timestamp()
+					FROM target
+					WHERE d.id = target.id AND (${differences.join(' OR ')})
+					RETURNING d.id, d.updated_at
+				)
+				UPDATE public.discussion_read_states rs
+				SET last_read_at = changed.updated_at, updated_at = now()
+				FROM changed, target
+				WHERE rs.discussion_id = changed.id
+					AND rs.user_id = $3
+					AND rs.last_read_at >= target.previous_activity_at
+					AND rs.last_read_at < changed.updated_at
+			`,
+			parameters,
 		);
 	}
 
@@ -368,7 +516,9 @@ export class DiscussionService {
 				content: initialMessageContent,
 			});
 			await discussionMessageRepository.save(initialMessage);
-			await this.upsertDiscussionReadState(organizationId, saved.id, user.id, manager);
+			// El creador queda leido hasta la creacion (reloj de la base, el mismo que fija
+			// `created_at` de la Discussion y de su mensaje inicial en esta transaccion).
+			await this.markReadUpToCurrentActivity(manager, organizationId, saved.id, user.id);
 
 			return saved.id;
 		});
@@ -573,9 +723,16 @@ export class DiscussionService {
 		discussionId: string,
 		user: User,
 	): Promise<{ discussionId: string; lastReadAt: string; isUnread: false }> {
-		await this.findDiscussionByIdForUser(organizationId, discussionId, user);
-		const lastReadAt = new Date();
-		await this.upsertDiscussionReadState(organizationId, discussionId, user.id, undefined, lastReadAt);
+		await this.orgAccessService.requireActiveMembership(user.id, organizationId);
+		// El UPSERT esta acotado por organizacion: si la Discussion no existe en ella no escribe
+		// nada y responde 404, como la busqueda previa que hacia antes.
+		const lastReadAt = await this.markReadUpToCurrentActivity(
+			this.dataSource.manager,
+			organizationId,
+			discussionId,
+			user.id,
+		);
+		if (!lastReadAt) throw new NotFoundException('Discussion not found');
 
 		return {
 			discussionId,
@@ -660,16 +817,19 @@ export class DiscussionService {
 		// Escrituras dirigidas (UPDATE de columnas e INSERT/DELETE en las tablas intermedias) en
 		// lugar de `save()`, que recargaba la Discussion y sus relaciones antes de escribir.
 		// Si hay mas de una sentencia se ejecutan juntas en una transaccion; una sola es atomica.
+		// Un cambio de columnas genera actividad: va primero, bajo el bloqueo de actividad (ver
+		// `withActivityLock`), que exige transaccion aunque sea la unica escritura.
+		const hasColumnChanges = Object.keys(columnChanges).length > 0;
 		const writes: Array<(manager: EntityManager) => Promise<unknown>> = [];
-		if (Object.keys(columnChanges).length) {
+		if (hasColumnChanges) {
 			writes.push((manager) =>
-				manager
-					.createQueryBuilder()
-					.update(Discussion)
-					.set(columnChanges)
-					.where('id = :id', { id })
-					.andWhere('organization_id = :organizationId', { organizationId })
-					.execute(),
+				this.withActivityLock(
+					organizationId,
+					id,
+					(lockedManager) =>
+						this.updateColumnsAsActor(lockedManager, organizationId, id, user.id, columnChanges),
+					manager,
+				),
 			);
 		}
 		for (const change of relationChanges) {
@@ -683,7 +843,7 @@ export class DiscussionService {
 			}
 		}
 
-		if (writes.length > 1) {
+		if (writes.length > 1 || hasColumnChanges) {
 			await this.dataSource.transaction(async (manager) => {
 				for (const write of writes) await write(manager);
 			});
@@ -721,18 +881,13 @@ export class DiscussionService {
 		const membership = await this.orgAccessService.requireActiveMembership(user.id, organizationId);
 		this.assertCanManageDiscussion(membership);
 
-		// Un unico UPDATE acotado por organizacion. Solo escribe (y actualiza `updated_at`) si el
-		// status cambia, igual que `save()`, que no emitia UPDATE cuando el valor era el mismo.
-		// Si la Discussion no existe en esta organizacion no afecta filas y la lectura siguiente
-		// responde 404, como antes.
-		await this.discussionRepository
-			.createQueryBuilder()
-			.update(Discussion)
-			.set({ status })
-			.where('id = :id', { id })
-			.andWhere('organization_id = :organizationId', { organizationId })
-			.andWhere('status <> :status', { status })
-			.execute();
+		// Bajo el bloqueo de actividad y acotado por organizacion (404 si la Discussion no existe en
+		// ella). Solo escribe (y actualiza `updated_at`) si el status cambia, igual que `save()`, que
+		// no emitia UPDATE cuando el valor era el mismo, y mantiene leida la Discussion para el actor
+		// sin ocultar actividad de terceros (ver `withActivityLock` y `updateColumnsAsActor`).
+		await this.withActivityLock(organizationId, id, (manager) =>
+			this.updateColumnsAsActor(manager, organizationId, id, user.id, { status }),
+		);
 
 		const updatedDiscussion = await this.findDiscussionById(organizationId, id);
 

@@ -9566,7 +9566,47 @@
 									"});",
 									"var data = {};",
 									"try { data = pm.response.json(); } catch (e) { data = {}; }",
-									"pm.test('isUnread false', function () { pm.expect(data.isUnread).to.eql(false); });"
+									"pm.test('isUnread false', function () { pm.expect(data.isUnread).to.eql(false); });",
+									"pm.test('Response keeps discussionId, lastReadAt, isUnread', function () {",
+									"  pm.expect(Object.keys(data).sort()).to.eql(['discussionId', 'isUnread', 'lastReadAt']);",
+									"  pm.expect(new Date(data.lastReadAt).toISOString()).to.eql(data.lastReadAt);",
+									"});",
+									"pm.collectionVariables.set('discussionLastReadAt', data.lastReadAt);"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Mark discussion as read again (lastReadAt does not go back)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/discussions/{{discussionId}}/read",
+						"description": "Una lectura repetida sin actividad nueva no retrocede lastReadAt: la discussion queda leida hasta su ultima actividad (reloj de PostgreSQL)."
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('isUnread false', function () { pm.expect(data.isUnread).to.eql(false); });",
+									"pm.test('lastReadAt does not go back on a repeated read', function () {",
+									"  var previous = pm.collectionVariables.get('discussionLastReadAt');",
+									"  pm.expect(previous, 'run Mark discussion as read first').to.be.a('string');",
+									"  pm.expect(new Date(data.lastReadAt).getTime()).to.be.at.least(new Date(previous).getTime());",
+									"});"
 								]
 							}
 						}

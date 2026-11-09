@@ -21,6 +21,7 @@ import { resolveStoredAttachmentResourceType } from '../helpers/attachment-resou
 import { DiscussionMessageListResponse } from '../interfaces/discussion-message-list-response.interface';
 import { WorkspaceNotificationService } from './workspace-notification.service';
 import { DiscussionService } from './discussion.service';
+import { WorkspaceOrganizationAccessService } from './workspace-organization-access.service';
 
 @Injectable()
 export class DiscussionMessageService {
@@ -32,6 +33,7 @@ export class DiscussionMessageService {
 		private readonly discussionService: DiscussionService,
 		private readonly cloudinaryService: CloudinaryService,
 		private readonly workflowNotificationService: WorkspaceNotificationService,
+		private readonly orgAccessService: WorkspaceOrganizationAccessService,
 	) { }
 
 	private normalizeMessageContent(content: string): string {
@@ -144,32 +146,33 @@ export class DiscussionMessageService {
 		dto: DiscussionMessageCreateDto,
 		user: User,
 	): Promise<DiscussionMessage> {
-		const discussion = await this.discussionService.requireDiscussionForUser(
+		await this.orgAccessService.requireActiveMembership(user.id, organizationId);
+
+		// La busqueda de la Discussion (404 si no existe en la organizacion) es la que toma el
+		// bloqueo de actividad; el INSERT y el estado de lectura del autor van en una sola sentencia.
+		// Las validaciones del contenido siguen despues de la busqueda, en el mismo orden que antes.
+		const hydratedMessage = await this.discussionService.withActivityLock(
 			organizationId,
 			discussionId,
-			user,
-		);
-		this.assertTextMessageType(dto.type);
-
-		const hydratedMessage = this.discussionMessageRepository.create({
-			discussion,
-			author: user,
-			type: DiscussionMessageType.TEXT,
-			content: this.normalizeMessageContent(dto.content),
-			fileUrl: null,
-			fileName: null,
-			mimeType: null,
-			fileSize: null,
-			cloudinaryPublicId: null,
-		});
-
-		// Un unico INSERT (atomico por si solo): `save()` lo envolvia en START TRANSACTION/COMMIT.
-		// TypeORM completa id, createdAt y updatedAt en la entidad a partir del RETURNING.
-		await this.discussionMessageRepository.insert(hydratedMessage);
-		await this.discussionService.upsertDiscussionReadState(
-			organizationId,
-			discussionId,
-			user.id,
+			async (manager, discussion) => {
+				this.assertTextMessageType(dto.type);
+				const message = this.discussionMessageRepository.create({
+					discussion,
+					author: user,
+					type: DiscussionMessageType.TEXT,
+					content: this.normalizeMessageContent(dto.content),
+					fileUrl: null,
+					fileName: null,
+					mimeType: null,
+					fileSize: null,
+					cloudinaryPublicId: null,
+				});
+				Object.assign(
+					message,
+					await this.discussionService.insertMessageAsAuthor(manager, discussionId, user.id, message),
+				);
+				return message;
+			},
 		);
 		// La respuesta se arma sin recargar el mensaje: `author` es el usuario autenticado (mismas
 		// columnas que la relacion; `password` es select: false) y `discussion` son las columnas
@@ -240,13 +243,15 @@ export class DiscussionMessageService {
 			cloudinaryPublicId: uploadedAsset.publicId,
 		});
 
-		let saved: DiscussionMessage;
+		let saved: { id: string };
 		try {
-			saved = await this.discussionMessageRepository.save(message);
-			await this.discussionService.upsertDiscussionReadState(
+			// Bajo el bloqueo de actividad (tomado despues de la subida, para no retenerlo durante
+			// ella); el INSERT y el estado de lectura del autor van en una sola sentencia.
+			saved = await this.discussionService.withActivityLock(
 				organizationId,
 				discussionId,
-				user.id,
+				(manager) =>
+					this.discussionService.insertMessageAsAuthor(manager, discussionId, user.id, message),
 			);
 		} catch (error) {
 			await this.cloudinaryService
