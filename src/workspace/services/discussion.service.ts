@@ -241,32 +241,33 @@ export class DiscussionService {
 		return new Map(rows.map((row) => [row.id, this.parseRawBoolean(row.isUnread)]));
 	}
 
-	async upsertDiscussionReadState(
+	/**
+	 * Marca la Discussion como leida para `userId` hasta su ultima actividad visible (reloj de la
+	 * base), sin retroceder un `last_read_at` posterior. No usa la hora de la aplicacion, que puede
+	 * estar desfasada respecto de la base: una lectura no puede anticiparse a actividad posterior.
+	 * Devuelve el `last_read_at` resultante, o `null` si la Discussion no existe en la organizacion.
+	 */
+	private async markReadUpToCurrentActivity(
+		manager: EntityManager,
 		organizationId: string,
 		discussionId: string,
 		userId: string,
-		manager?: EntityManager,
-		lastReadAt: Date = new Date(),
-	): Promise<void> {
-		const effectiveManager = manager ?? this.dataSource.manager;
-
-		await effectiveManager.query(
+	): Promise<Date | null> {
+		const rows: Array<{ last_read_at: Date }> = await manager.query(
 			`
-				INSERT INTO public.discussion_read_states (
-					discussion_id,
-					user_id,
-					last_read_at
-				)
-				SELECT d.id, $2, $3
+				INSERT INTO public.discussion_read_states (discussion_id, user_id, last_read_at)
+				SELECT d.id, $2, ${DiscussionService.activityAtSql()}
 				FROM public.discussions d
-				WHERE d.id = $1 AND d.organization_id = $4
+				WHERE d.id = $1 AND d.organization_id = $3
 				ON CONFLICT (discussion_id, user_id)
 				DO UPDATE SET
 					last_read_at = GREATEST(discussion_read_states.last_read_at, EXCLUDED.last_read_at),
 					updated_at = now()
+				RETURNING last_read_at
 			`,
-			[discussionId, userId, lastReadAt, organizationId],
+			[discussionId, userId, organizationId],
 		);
+		return rows[0]?.last_read_at ?? null;
 	}
 
 	/**
@@ -277,32 +278,6 @@ export class DiscussionService {
 	private static activityAtSql(excludedMessageIdSql?: string): string {
 		const excludeMessage = excludedMessageIdSql ? ` AND m.id <> ${excludedMessageIdSql}` : '';
 		return `GREATEST(d.updated_at, COALESCE((SELECT MAX(m.created_at) FROM public.discussion_messages m WHERE m.discussion_id = d.id${excludeMessage}), d.created_at))`;
-	}
-
-	/**
-	 * El creador queda leido hasta el instante de creacion, tomado del reloj de la base (el mismo
-	 * que fija `created_at` de la Discussion y de su mensaje inicial en esta transaccion), y no del
-	 * reloj de la aplicacion, que puede estar desfasado respecto de la base.
-	 */
-	private async markCreatorAsRead(
-		manager: EntityManager,
-		organizationId: string,
-		discussionId: string,
-		userId: string,
-	): Promise<void> {
-		await manager.query(
-			`
-				INSERT INTO public.discussion_read_states (discussion_id, user_id, last_read_at)
-				SELECT d.id, $2, ${DiscussionService.activityAtSql()}
-				FROM public.discussions d
-				WHERE d.id = $1 AND d.organization_id = $3
-				ON CONFLICT (discussion_id, user_id)
-				DO UPDATE SET
-					last_read_at = GREATEST(discussion_read_states.last_read_at, EXCLUDED.last_read_at),
-					updated_at = now()
-			`,
-			[discussionId, userId, organizationId],
-		);
 	}
 
 	/**
@@ -490,7 +465,9 @@ export class DiscussionService {
 				content: initialMessageContent,
 			});
 			await discussionMessageRepository.save(initialMessage);
-			await this.markCreatorAsRead(manager, organizationId, saved.id, user.id);
+			// El creador queda leido hasta la creacion (reloj de la base, el mismo que fija
+			// `created_at` de la Discussion y de su mensaje inicial en esta transaccion).
+			await this.markReadUpToCurrentActivity(manager, organizationId, saved.id, user.id);
 
 			return saved.id;
 		});
@@ -695,9 +672,16 @@ export class DiscussionService {
 		discussionId: string,
 		user: User,
 	): Promise<{ discussionId: string; lastReadAt: string; isUnread: false }> {
-		await this.findDiscussionByIdForUser(organizationId, discussionId, user);
-		const lastReadAt = new Date();
-		await this.upsertDiscussionReadState(organizationId, discussionId, user.id, undefined, lastReadAt);
+		await this.orgAccessService.requireActiveMembership(user.id, organizationId);
+		// El UPSERT esta acotado por organizacion: si la Discussion no existe en ella no escribe
+		// nada y responde 404, como la busqueda previa que hacia antes.
+		const lastReadAt = await this.markReadUpToCurrentActivity(
+			this.dataSource.manager,
+			organizationId,
+			discussionId,
+			user.id,
+		);
+		if (!lastReadAt) throw new NotFoundException('Discussion not found');
 
 		return {
 			discussionId,
