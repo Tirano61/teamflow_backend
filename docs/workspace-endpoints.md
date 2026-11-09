@@ -387,7 +387,8 @@ Orden de evaluacion de errores:
 
 ### POST /organizations/:organizationId/workspace/discussions/:id/read
 - Auth: Membership ACTIVE (cualquier role)
-- Descripcion: Marca la discussion como leida para el usuario autenticado (idempotente, usa UPSERT por `(discussion_id, user_id)`).
+- Descripcion: Marca la discussion como leida para el usuario autenticado (idempotente, usa UPSERT por `(discussion_id, user_id)`). Queda leida hasta su ultima actividad (reloj de PostgreSQL); `lastReadAt` nunca retrocede. La actividad posterior a la lectura, incluida la que se estaba escribiendo en ese momento, sigue no leida. Ver "Read State / Unread".
+- `lastReadAt` de la respuesta es el valor guardado, en milisegundos (como el resto de los timestamps de la API).
 - Respuesta 201:
 ```json
 {
@@ -1774,4 +1775,6 @@ Unicidad: `(organizationId, normalizedName)`. `normalizedName` es el `name` reco
   - Cambiar `title`/`type`/`status` o enviar un mensaje mueve `lastReadAt` del autor hasta el instante de su propio cambio (`updatedAt` resultante o `createdAt` del mensaje), solo si el autor ya habia leido toda la actividad anterior a ese cambio. Si habia actividad de otros usuarios sin leer (mensajes o cambios), `lastReadAt` no se modifica y la discussion sigue no leida.
   - Si el autor nunca leyo la discussion (sin read-state), su cambio no crea uno.
   - Para el resto de los usuarios el cambio sigue siendo actividad nueva (no leida), como antes.
-- Los timestamps de los cambios propios salen del reloj de PostgreSQL. `POST .../read` marca leido con la hora del servidor de aplicacion.
+- `POST .../read` marca leido hasta la ultima actividad de la discussion (`lastReadAt` = esa actividad, sin retroceder un valor posterior), no hasta la hora del servidor de aplicacion.
+- Todos los timestamps de lectura y actividad salen del reloj de PostgreSQL; un desfase del reloj del servidor de aplicacion no adelanta ni atrasa la lectura.
+- Concurrencia: las escrituras que generan actividad (mensaje nuevo, cambio de `title`/`type`/`status`) se serializan por discussion con un bloqueo de su fila y toman su timestamp despues del bloqueo. Por eso un cambio propio o una lectura nunca marcan como leido un mensaje o cambio de otro usuario que se este escribiendo al mismo tiempo: ese mensaje queda con un timestamp posterior y sigue no leido. Las asignaciones, el contexto y la edicion o eliminacion de mensajes no toman ese bloqueo.
