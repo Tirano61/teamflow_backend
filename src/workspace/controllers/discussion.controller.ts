@@ -44,8 +44,8 @@ export class DiscussionController {
 	findDiscussions(
 		@Param('organizationId', ParseUUIDPipe) organizationId: string,
 		@GetUser() user: User,
-		@Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
 		@Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+		@Query('cursor') cursor?: string,
 		@Query('type', new ParseEnumPipe(DiscussionType, { optional: true }))
 		type?: DiscussionType,
 		@Query('status', new ParseEnumPipe(DiscussionStatus, { optional: true }))
@@ -64,8 +64,8 @@ export class DiscussionController {
 		return this.discussionService.findDiscussions(
 			organizationId,
 			{
-				page,
 				limit,
+				cursor,
 				type,
 				status,
 				moduleIds,

@@ -5,6 +5,7 @@ import {
 	Logger,
 	NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { isUUID } from 'class-validator';
 import { User } from '../../auth/entities/user.entity';
@@ -20,16 +21,42 @@ import { DiscussionMessage } from '../entities/discussion_message.entity';
 import { DiscussionReadState } from '../entities/discussion_read_state.entity';
 import { Tag } from '../entities/tag.entity';
 import { DiscussionListFilters } from '../interfaces/discussion-list-filters.interface';
-import { DiscussionListResponse } from '../interfaces/discussion-list-response.interface';
+import {
+	DiscussionListResponse,
+	DiscussionListSummary,
+} from '../interfaces/discussion-list-response.interface';
 import { DiscussionStatus } from '../enums/discussion-status.enum';
+import { DiscussionType } from '../enums/discussion-type.enum';
 import { DiscussionMessageType } from '../enums/discussion-message-type.enum';
+import {
+	DiscussionListCursorContext,
+	DiscussionListCursorPosition,
+	decodeDiscussionListCursor,
+	deriveDiscussionListCursorKey,
+	encodeDiscussionListCursor,
+	fingerprintDiscussionListFilters,
+} from '../helpers/discussion-list-cursor.helper';
 import { WorkspaceNotificationService } from './workspace-notification.service';
 import { DataSource, EntityManager, In, Repository, SelectQueryBuilder } from 'typeorm';
 import { WorkspaceOrganizationAccessService } from './workspace-organization-access.service';
 
+/** Filtros efectivos del listado, ya validados y resueltos al usuario autenticado. */
+interface DiscussionListCriteria {
+	type?: DiscussionType;
+	status?: DiscussionStatus;
+	moduleIds: string[];
+	componentIds: string[];
+	tagIds: string[];
+	createdByUserId?: string;
+	assignedUserId?: string;
+	unread: boolean;
+}
+
 @Injectable()
 export class DiscussionService {
 	private readonly logger = new Logger(DiscussionService.name);
+	/** Clave de firma de los cursores del listado, derivada de `JWT_SECRET_KEY`. */
+	private readonly cursorKey: Buffer;
 
 	constructor(
 		@InjectRepository(Discussion)
@@ -39,7 +66,12 @@ export class DiscussionService {
 		private readonly dataSource: DataSource,
 		private readonly workflowNotificationService: WorkspaceNotificationService,
 		private readonly orgAccessService: WorkspaceOrganizationAccessService,
-	) {}
+		configService: ConfigService,
+	) {
+		const secret = configService.get<string>('JWT_SECRET_KEY');
+		if (!secret) throw new Error('JWT_SECRET_KEY is not configured');
+		this.cursorKey = deriveDiscussionListCursorKey(secret);
+	}
 
 	private normalizeTitle(title: string): string {
 		const normalized = title.trim();
@@ -95,15 +127,11 @@ export class DiscussionService {
 		return uniqueValues;
 	}
 
-	private normalizePagination(page: number, limit: number) {
-		if (page < 1) throw new BadRequestException('page must be greater than 0');
+	private normalizeListLimit(limit: number): number {
 		if (limit < 1) {
 			throw new BadRequestException('limit must be greater than 0');
 		}
-		return {
-			page,
-			limit: Math.min(limit, 100),
-		};
+		return Math.min(limit, 100);
 	}
 
 	/**
@@ -175,38 +203,94 @@ export class DiscussionService {
 		return false;
 	}
 
+	/**
+	 * Condicion "no leida" para el alias `discussion`, con el read-state del usuario unido como
+	 * `read_state` (ver `applyUnreadJoins`). La ultima actividad es la misma expresion que usan las
+	 * escrituras (`activityAtSql`): el ultimo mensaje se busca por Discussion con el indice
+	 * `(discussion_id, created_at)`, asi que solo se calcula para las filas que la consulta evalua.
+	 */
 	private buildUnreadConditionSql(): string {
-		const lastActivityAtSql =
-			'GREATEST(discussion.updated_at, COALESCE(last_message.last_message_at, discussion.created_at))';
-		return `(read_state.last_read_at IS NULL OR read_state.last_read_at < ${lastActivityAtSql})`;
+		return `(read_state.last_read_at IS NULL OR read_state.last_read_at < ${DiscussionService.activityAtSql('discussion')})`;
 	}
 
 	private applyUnreadJoins(
 		queryBuilder: SelectQueryBuilder<Discussion>,
 		currentUserId: string,
 	): string {
-		const lastMessageSubQuery = queryBuilder
-			.subQuery()
-			.select('message.discussion_id', 'discussion_id')
-			.addSelect('MAX(message.created_at)', 'last_message_at')
-			.from(DiscussionMessage, 'message')
-			.groupBy('message.discussion_id')
-			.getQuery();
-
-		queryBuilder
-			.leftJoin(
-				`(${lastMessageSubQuery})`,
-				'last_message',
-				'last_message.discussion_id = discussion.id',
-			)
-			.leftJoin(
-				DiscussionReadState,
-				'read_state',
-				'read_state.discussion_id = discussion.id AND read_state.user_id = :readStateUserId',
-				{ readStateUserId: currentUserId },
-			);
+		queryBuilder.leftJoin(
+			DiscussionReadState,
+			'read_state',
+			'read_state.discussion_id = discussion.id AND read_state.user_id = :readStateUserId',
+			{ readStateUserId: currentUserId },
+		);
 
 		return this.buildUnreadConditionSql();
+	}
+
+	/**
+	 * Consulta base del listado: Discussions de la organizacion que cumplen los filtros, una fila
+	 * por Discussion (los filtros sobre relaciones usan EXISTS, no joins que multipliquen filas).
+	 * La comparten la pagina y los contadores para que ambos apliquen exactamente los mismos filtros.
+	 * - `applyStatus: false` omite el filtro `status` (desglose por status de los contadores).
+	 * El read-state del usuario solo se une cuando se filtra por no leidas.
+	 */
+	private buildDiscussionListQuery(
+		organizationId: string,
+		criteria: DiscussionListCriteria,
+		currentUserId: string,
+		options: { applyStatus: boolean },
+	): SelectQueryBuilder<Discussion> {
+		const queryBuilder = this.discussionRepository
+			.createQueryBuilder('discussion')
+			.where('discussion.organization_id = :organizationId', { organizationId });
+
+		if (criteria.type) {
+			queryBuilder.andWhere('discussion.type = :type', { type: criteria.type });
+		}
+
+		if (options.applyStatus && criteria.status) {
+			queryBuilder.andWhere('discussion.status = :status', { status: criteria.status });
+		}
+
+		if (criteria.moduleIds.length > 0) {
+			queryBuilder.andWhere(
+				'EXISTS (SELECT 1 FROM public.discussion_work_modules module_filter WHERE module_filter.discussion_id = discussion.id AND module_filter.work_module_id IN (:...moduleIds))',
+				{ moduleIds: criteria.moduleIds },
+			);
+		}
+
+		if (criteria.componentIds.length > 0) {
+			queryBuilder.andWhere(
+				'EXISTS (SELECT 1 FROM public.discussion_components component_filter WHERE component_filter.discussion_id = discussion.id AND component_filter.component_id IN (:...componentIds))',
+				{ componentIds: criteria.componentIds },
+			);
+		}
+
+		if (criteria.tagIds.length > 0) {
+			queryBuilder.andWhere(
+				'EXISTS (SELECT 1 FROM public.discussion_tags tag_filter WHERE tag_filter.discussion_id = discussion.id AND tag_filter.tag_id IN (:...tagIds))',
+				{ tagIds: criteria.tagIds },
+			);
+		}
+
+		if (criteria.createdByUserId) {
+			queryBuilder.andWhere('discussion.created_by = :createdByUserId', {
+				createdByUserId: criteria.createdByUserId,
+			});
+		}
+
+		if (criteria.assignedUserId) {
+			queryBuilder.andWhere(
+				'EXISTS (SELECT 1 FROM public.discussion_assignments assignment_filter WHERE assignment_filter.discussion_id = discussion.id AND assignment_filter.developer_user_id = :assignedUserId)',
+				{ assignedUserId: criteria.assignedUserId },
+			);
+		}
+
+		if (criteria.unread) {
+			queryBuilder.andWhere(this.applyUnreadJoins(queryBuilder, currentUserId));
+		}
+
+		return queryBuilder;
 	}
 
 	private attachUnreadFlags(
@@ -273,10 +357,11 @@ export class DiscussionService {
 	}
 
 	/**
-	 * Ultima actividad de la Discussion `d`: misma expresion que `buildUnreadConditionSql`.
+	 * Ultima actividad de la Discussion con alias `alias`. Es la unica definicion de "ultima
+	 * actividad": la usan las escrituras de lectura y la condicion `buildUnreadConditionSql`.
 	 */
-	private static activityAtSql(): string {
-		return `GREATEST(d.updated_at, COALESCE((SELECT MAX(m.created_at) FROM public.discussion_messages m WHERE m.discussion_id = d.id), d.created_at))`;
+	private static activityAtSql(alias = 'd'): string {
+		return `GREATEST(${alias}.updated_at, COALESCE((SELECT MAX(m.created_at) FROM public.discussion_messages m WHERE m.discussion_id = ${alias}.id), ${alias}.created_at))`;
 	}
 
 	/**
@@ -548,7 +633,7 @@ export class DiscussionService {
 		currentUser: User,
 	): Promise<DiscussionListResponse> {
 		await this.orgAccessService.requireActiveMembership(currentUser.id, organizationId);
-		const { page, limit } = this.normalizePagination(filters.page, filters.limit);
+		const limit = this.normalizeListLimit(filters.limit);
 		const moduleIds = this.parseIdsCsv(filters.moduleIds, 'moduleIds');
 		const componentIds = this.parseIdsCsv(filters.componentIds, 'componentIds');
 		const tagIds = this.parseIdsCsv(filters.tagIds, 'tagIds');
@@ -561,100 +646,139 @@ export class DiscussionService {
 			throw new BadRequestException('assignedDeveloperId must be a valid UUID');
 		}
 
-		const queryBuilder = this.discussionRepository
-			.createQueryBuilder('discussion')
-			.leftJoin('discussion.createdBy', 'createdByFilter')
-			.leftJoin('discussion.workModules', 'moduleFilter')
-			.leftJoin('discussion.components', 'componentFilter')
-			.leftJoin('discussion.tags', 'tagFilter')
-			.leftJoin('discussion.assignedDevelopers', 'assignedDeveloperFilter')
-			.where('discussion.organization_id = :organizationId', { organizationId });
+		// Filtros efectivos: `mine` y `assignedToMe` se resuelven al usuario autenticado.
+		const criteria: DiscussionListCriteria = {
+			type: filters.type,
+			status: filters.status,
+			moduleIds,
+			componentIds,
+			tagIds,
+			createdByUserId: filters.mine ? currentUser.id : filters.createdBy || undefined,
+			assignedUserId: filters.assignedToMe
+				? currentUser.id
+				: filters.assignedDeveloperId || undefined,
+			unread: filters.unread ?? false,
+		};
 
-		const unreadConditionSql = this.applyUnreadJoins(queryBuilder, currentUser.id);
-
-		if (filters.type) {
-			queryBuilder.andWhere('discussion.type = :type', { type: filters.type });
+		// El cursor solo aporta la posicion. Organizacion, usuario y filtros salen de la ruta, del
+		// token y de los query params; un cursor emitido para otro contexto se rechaza.
+		const cursorContext: DiscussionListCursorContext = {
+			organizationId,
+			userId: currentUser.id,
+			filtersFingerprint: fingerprintDiscussionListFilters(criteria),
+		};
+		let position: DiscussionListCursorPosition | null = null;
+		if (filters.cursor !== undefined) {
+			const decoded = decodeDiscussionListCursor(this.cursorKey, cursorContext, filters.cursor);
+			if (decoded === 'invalid') throw new BadRequestException('Invalid cursor');
+			if (decoded === 'filters-mismatch') {
+				throw new BadRequestException('Cursor does not match the current filters');
+			}
+			position = decoded;
 		}
 
-		if (filters.status) {
-			queryBuilder.andWhere('discussion.status = :status', { status: filters.status });
+		// Ids de la pagina: keyset sobre (created_at DESC, id ASC), con los filtros aplicados antes del
+		// limite. Se pide una fila de mas para saber si hay pagina siguiente. `created_at` viaja como
+		// texto con microsegundos: un `Date` de JavaScript lo truncaria a milisegundos y la comparacion
+		// saltearia o repetiria filas.
+		const pageIdsQuery = this.buildDiscussionListQuery(organizationId, criteria, currentUser.id, {
+			applyStatus: true,
+		});
+		if (position) {
+			pageIdsQuery.andWhere(
+				`discussion.created_at <= CAST(:cursorCreatedAt AS timestamp) AND (discussion.created_at < CAST(:cursorCreatedAt AS timestamp) OR discussion.id > :cursorId)`,
+				{ cursorCreatedAt: position.createdAt, cursorId: position.id },
+			);
 		}
-
-		if (moduleIds.length > 0) {
-			queryBuilder.andWhere('moduleFilter.id IN (:...moduleIds)', { moduleIds });
-		}
-
-		if (componentIds.length > 0) {
-			queryBuilder.andWhere('componentFilter.id IN (:...componentIds)', { componentIds });
-		}
-
-		if (tagIds.length > 0) {
-			queryBuilder.andWhere('tagFilter.id IN (:...tagIds)', { tagIds });
-		}
-
-		if (filters.mine) {
-			queryBuilder.andWhere('createdByFilter.id = :currentUserId', {
-				currentUserId: currentUser.id,
-			});
-		} else if (filters.createdBy) {
-			queryBuilder.andWhere('createdByFilter.id = :createdBy', {
-				createdBy: filters.createdBy,
-			});
-		}
-
-		if (filters.assignedToMe) {
-			queryBuilder.andWhere('assignedDeveloperFilter.id = :assignedToMeUserId', {
-				assignedToMeUserId: currentUser.id,
-			});
-		} else if (filters.assignedDeveloperId) {
-			queryBuilder.andWhere('assignedDeveloperFilter.id = :assignedDeveloperId', {
-				assignedDeveloperId: filters.assignedDeveloperId,
-			});
-		}
-
-		if (filters.unread) {
-			queryBuilder.andWhere(unreadConditionSql);
-		}
-
-		const total = await queryBuilder.clone().select('discussion.id').distinct(true).getCount();
-
-		const discussionRows = await queryBuilder
-			.clone()
-			.select('discussion.id', 'id')
-			.addSelect('discussion.createdAt', 'createdAt')
-			.addSelect(`CASE WHEN ${unreadConditionSql} THEN true ELSE false END`, 'isUnread')
-			.distinct(true)
+		pageIdsQuery
+			.select('discussion.id')
 			.orderBy('discussion.createdAt', 'DESC')
 			.addOrderBy('discussion.id', 'ASC')
-			.offset((page - 1) * limit)
-			.limit(limit)
-			.getRawMany<{ id: string; isUnread: boolean | string | number }>();
+			.limit(limit + 1);
 
-		const discussionIds = discussionRows.map((row) => row.id);
-		const unreadByDiscussionId = new Map(
-			discussionRows.map((row) => [row.id, this.parseRawBoolean(row.isUnread)]),
-		);
-		const data = discussionIds.length
-			? await this.discussionRepository.find({
-					where: { id: In(discussionIds), organizationId },
-					relations: ['createdBy', 'workModules', 'components', 'tags', 'assignedDevelopers'],
-					order: { createdAt: 'DESC' },
+		// La pagina se hidrata en la misma sentencia (un solo viaje a la base): las relaciones se unen
+		// solo para los ids de la subconsulta, que es la que filtra, ordena y limita.
+		const pageQuery = this.discussionRepository
+			.createQueryBuilder('discussion')
+			.leftJoinAndSelect('discussion.createdBy', 'createdBy')
+			.leftJoinAndSelect('discussion.workModules', 'workModules')
+			.leftJoinAndSelect('discussion.components', 'components')
+			.leftJoinAndSelect('discussion.tags', 'tags')
+			.leftJoinAndSelect('discussion.assignedDevelopers', 'assignedDevelopers')
+			.where(`discussion.id IN (${pageIdsQuery.getQuery()})`)
+			.setParameters(pageIdsQuery.getParameters())
+			.andWhere('discussion.organization_id = :organizationId', { organizationId });
+		const unreadConditionSql = this.applyUnreadJoins(pageQuery, currentUser.id);
+		pageQuery
+			.addSelect(`to_char(discussion.created_at, 'YYYY-MM-DD HH24:MI:SS.US')`, 'page_created_at')
+			.addSelect(`CASE WHEN ${unreadConditionSql} THEN true ELSE false END`, 'page_is_unread')
+			.orderBy('discussion.createdAt', 'DESC')
+			.addOrderBy('discussion.id', 'ASC');
+
+		// Contadores: una sola agregacion por status, sin el filtro `status`, solo en la primera
+		// pagina. Va en paralelo con la pagina (no depende de ella).
+		const summaryQuery = position
+			? null
+			: this.buildDiscussionListQuery(organizationId, criteria, currentUser.id, {
+					applyStatus: false,
 			  })
-			: [];
+					.select('discussion.status', 'status')
+					.addSelect('COUNT(*)', 'count')
+					.groupBy('discussion.status');
 
-		const dataById = new Map(data.map((discussion) => [discussion.id, discussion]));
-		const orderedData = discussionIds
-			.map((discussionId) => dataById.get(discussionId))
-			.filter((discussion): discussion is Discussion => Boolean(discussion));
-		const hydratedData = this.attachUnreadFlags(orderedData, unreadByDiscussionId);
+		const [page, statusRows] = await Promise.all([
+			pageQuery.getRawAndEntities<{
+				discussion_id: string;
+				page_created_at: string;
+				page_is_unread: boolean | string | number;
+			}>(),
+			summaryQuery
+				? summaryQuery.getRawMany<{ status: DiscussionStatus; count: string }>()
+				: Promise.resolve(null),
+		]);
+
+		// Las filas crudas repiten cada Discussion una vez por combinacion de relaciones.
+		const rawByDiscussionId = new Map(page.raw.map((row) => [row.discussion_id, row]));
+		const hasNextPage = page.entities.length > limit;
+		const pageDiscussions = hasNextPage ? page.entities.slice(0, limit) : page.entities;
+		const lastDiscussion = pageDiscussions[pageDiscussions.length - 1];
+		const nextCursor =
+			hasNextPage && lastDiscussion
+				? encodeDiscussionListCursor(this.cursorKey, cursorContext, {
+						createdAt: rawByDiscussionId.get(lastDiscussion.id)!.page_created_at,
+						id: lastDiscussion.id,
+				  })
+				: null;
+
+		const unreadByDiscussionId = new Map(
+			pageDiscussions.map((discussion) => [
+				discussion.id,
+				this.parseRawBoolean(rawByDiscussionId.get(discussion.id)?.page_is_unread),
+			]),
+		);
+		const hydratedData = this.attachUnreadFlags(pageDiscussions, unreadByDiscussionId);
 
 		return {
-			data: this.sanitizeDiscussionListAssignees(hydratedData),
-			page,
-			limit,
-			total,
-			totalPages: Math.ceil(total / limit),
+			items: this.sanitizeDiscussionListAssignees(hydratedData),
+			pageInfo: { nextCursor, hasNextPage },
+			summary: statusRows ? this.buildListSummary(statusRows, criteria.status) : null,
 		};
+	}
+
+	private buildListSummary(
+		statusRows: Array<{ status: DiscussionStatus; count: string }>,
+		statusFilter: DiscussionStatus | undefined,
+	): DiscussionListSummary {
+		const byStatus = Object.fromEntries(
+			Object.values(DiscussionStatus).map((status) => [status, 0]),
+		) as Record<DiscussionStatus, number>;
+		for (const row of statusRows) byStatus[row.status] = Number(row.count);
+
+		const total = statusFilter
+			? byStatus[statusFilter]
+			: Object.values(byStatus).reduce((sum, count) => sum + count, 0);
+
+		return { total, byStatus };
 	}
 
 	async findDiscussionById(organizationId: string, id: string): Promise<Discussion> {
