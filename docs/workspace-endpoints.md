@@ -363,22 +363,124 @@ Orden de evaluacion de errores:
 
 ### GET /organizations/:organizationId/workspace/discussions
 - Auth: Membership ACTIVE (cualquier role)
-- Descripcion: Lista discussions de la organization, paginadas con filtros, ordenadas por `createdAt` DESC. Cada item incluye `isUnread` calculado para el usuario autenticado.
-- Query params opcionales:
-  - page (default 1, minimo 1)
-  - limit (default 20, minimo 1, maximo efectivo 100)
-  - type (ERROR | IDEA | IMPROVEMENT | QUESTION)
-  - status (NEW | REVIEW | IN_PROGRESS | RESOLVED)
-  - moduleIds (CSV de UUIDs)
-  - componentIds (CSV de UUIDs)
-  - tagIds (CSV de UUIDs)
-  - createdBy (UUID de usuario; se ignora si `mine=true`)
-  - mine (true|false)
-  - assignedToMe (true|false)
-  - assignedDeveloperId (UUID de developer asignado; se ignora si `assignedToMe=true`)
-  - unread (true|false)
-- Respuesta 200: `{ "data": [...], "page", "limit", "total", "totalPages" }`
-- Errores: 400 paginacion invalida, enum invalido, UUID invalido o ids duplicados en un CSV; 403 sin Membership `ACTIVE`.
+- Descripcion: Lista discussions de la organization con filtros, paginadas por cursor (scroll infinito) y con contadores globales. Orden fijo: `createdAt` DESC y, para empates, `id` ASC. Cada item incluye `isUnread` calculado para el usuario autenticado (ver "Read State / Unread").
+- No existe paginacion por numero de pagina: el parametro `page` no forma parte del contrato (si se envia, se ignora) y la respuesta no incluye `data`, `page`, `total` ni `totalPages`.
+
+#### Query params (todos opcionales)
+
+| Param | Valores | Notas |
+| ----- | ------- | ----- |
+| `limit` | entero, default 20 | Minimo 1 (400 `limit must be greater than 0`). Un valor mayor a 100 se recorta a 100. |
+| `cursor` | string opaco | `pageInfo.nextCursor` de la pagina anterior. Sin `cursor` se devuelve la primera pagina. |
+| `type` | `ERROR \| IDEA \| IMPROVEMENT \| QUESTION` | |
+| `status` | `NEW \| REVIEW \| IN_PROGRESS \| RESOLVED` | Ver su efecto sobre `summary`. |
+| `moduleIds` | CSV de UUIDs | Discussions asociadas a al menos uno de esos WorkModules. |
+| `componentIds` | CSV de UUIDs | Discussions asociadas a al menos uno de esos Components. |
+| `tagIds` | CSV de UUIDs | Discussions con al menos uno de esos Tags. |
+| `createdBy` | UUID de usuario | Se ignora si `mine=true`. |
+| `mine` | `true \| false` | Discussions creadas por el usuario autenticado. |
+| `assignedDeveloperId` | UUID de usuario | Se ignora si `assignedToMe=true`. |
+| `assignedToMe` | `true \| false` | Discussions asignadas al usuario autenticado. |
+| `unread` | `true \| false` | Solo discussions no leidas por el usuario autenticado. |
+
+- Los filtros se combinan con AND y se aplican en PostgreSQL antes del limite de pagina. No hay busqueda por texto.
+- Los filtros deben enviarse iguales en todas las paginas de un mismo recorrido (ver "Cursor").
+
+#### Respuesta 200
+
+```json
+{
+  "items": [
+    {
+      "id": "UUID",
+      "organizationId": "UUID",
+      "type": "ERROR",
+      "title": "Problema en el proceso de alta",
+      "status": "NEW",
+      "createdAt": "2026-06-01T12:00:00.654Z",
+      "updatedAt": "2026-06-01T12:00:00.654Z",
+      "createdBy": { "id": "UUID", "email": "...", "fullName": "...", "isActive": true, "roles": ["..."], "created_at": "ISO-8601", "updated_at": "ISO-8601" },
+      "workModules": [],
+      "components": [],
+      "tags": [],
+      "assignedDevelopers": [{ "id": "UUID", "fullName": "...", "email": "..." }],
+      "isUnread": true
+    }
+  ],
+  "pageInfo": {
+    "nextCursor": "eyJ2IjoxLCJvIjoi...",
+    "hasNextPage": true
+  },
+  "summary": {
+    "total": 1525,
+    "byStatus": { "NEW": 668, "REVIEW": 212, "IN_PROGRESS": 441, "RESOLVED": 204 }
+  }
+}
+```
+
+- `items`: solo la pagina solicitada (como maximo `limit` discussions), con la misma forma que antes tenia cada elemento de `data` y que devuelve `GET .../discussions/:id`: columnas de la discussion, `createdBy`, `workModules`, `components`, `tags`, `assignedDevelopers` (`id`, `fullName`, `email`) e `isUnread`.
+- `pageInfo.hasNextPage`: `true` si hay mas discussions despues de la ultima de `items`.
+- `pageInfo.nextCursor`: cursor para pedir la pagina siguiente; `null` cuando `hasNextPage` es `false`.
+- `summary`: contadores globales. Se devuelve solo en la primera pagina (peticion sin `cursor`); en las paginas siguientes es `null`.
+
+#### Contadores (`summary`)
+
+- Los calcula PostgreSQL con una sola agregacion sobre todas las discussions de la organization que cumplen los filtros; no dependen de `limit` ni de cuantas discussions se hayan cargado.
+- `summary.total`: cantidad de discussions que cumplen todos los filtros de la peticion, incluido `status`. Es la cantidad total de items que devuelve el recorrido completo.
+- `summary.byStatus`: cantidad de discussions por status que cumplen todos los filtros excepto `status`. Siempre incluye las cuatro claves (`NEW`, `REVIEW`, `IN_PROGRESS`, `RESOLVED`), con `0` cuando no hay ninguna.
+- Efecto del filtro `status`: no modifica `byStatus` (el desglose de las columnas/pestanas se mantiene al elegir un status) y deja `total = byStatus[status]`. Sin filtro `status`, `total` es la suma de `byStatus`.
+- El resto de los filtros (`type`, `moduleIds`, `componentIds`, `tagIds`, `mine`/`createdBy`, `assignedToMe`/`assignedDeveloperId`, `unread`) acotan tanto `total` como `byStatus`. Ejemplo: con `assignedToMe=true&status=NEW`, `byStatus` cuenta las discussions asignadas al usuario en cada status y `total` las asignadas en `NEW`.
+- `summary` solo viaja en la primera pagina: es una consulta menos en cada pagina siguiente, y los contadores corresponden al momento en que se cargo (o recargo) la lista. El cliente debe conservar el ultimo `summary` no nulo y volver a pedir la primera pagina para actualizarlo (pull-to-refresh, cambio de filtros, o despues de crear una discussion o cambiar un status).
+
+#### Cursor
+
+- Es opaco: el cliente lo reenvia sin interpretarlo ni modificarlo. Internamente esta versionado y firmado (HMAC), e identifica la posicion de la ultima discussion de la pagina (`createdAt` con precision de microsegundos + `id`).
+- La paginacion es por keyset sobre `(createdAt DESC, id ASC)`; no usa OFFSET. Discussions con el mismo `createdAt` se ordenan por `id` y no se repiten ni se saltean al cruzar de pagina.
+- El cursor solo aporta la posicion. La organization sale de la ruta, el usuario del token y los filtros de los query params; el cursor se valida contra ese contexto y se rechaza si no coincide:
+
+| Caso | Respuesta |
+| ---- | --------- |
+| Malformado, vacio, truncado o de mas de 1024 caracteres | 400 `Invalid cursor` |
+| Firma invalida (contenido manipulado) o version desconocida | 400 `Invalid cursor` |
+| Obtenido en otra organization | 400 `Invalid cursor` |
+| Obtenido por otro usuario | 400 `Invalid cursor` |
+| Obtenido con otros filtros (`type`, `status`, `moduleIds`, `componentIds`, `tagIds`, creador, asignado, `unread`) | 400 `Cursor does not match the current filters` |
+
+- El orden de los ids dentro de un CSV no cambia los filtros, y `mine=true` equivale a `createdBy=<usuario autenticado>` (igual `assignedToMe` y `assignedDeveloperId`). `limit` no forma parte del cursor: puede cambiar entre paginas.
+- El cursor no vence, pero deja de ser valido si cambia el secreto del backend (`JWT_SECRET_KEY`). Ante un 400 por cursor, el cliente debe descartar la lista y volver a pedir la primera pagina.
+- La Membership se valida antes que el cursor: sin Membership `ACTIVE` la respuesta es 403 aunque el cursor sea invalido.
+
+#### Consistencia mientras se navega
+
+El recorrido NO es una instantanea: cada pagina se lee con el estado de ese momento. Garantias y limites:
+
+- Una discussion nunca aparece dos veces en un mismo recorrido, y las que no cambian nunca se saltean (el orden depende de `createdAt` e `id`, que no cambian).
+- Discussions creadas despues de empezar el recorrido quedan antes de la primera pagina: no aparecen en las paginas siguientes ni las desplazan. Se ven al volver a pedir la primera pagina.
+- Discussions eliminadas entre paginas simplemente no aparecen; el cursor sigue sirviendo aunque se elimine la discussion a la que apunta.
+- Si una discussion deja de cumplir los filtros entre paginas (por ejemplo cambia de `status`, o se lee con `unread=true`), no aparece en las paginas todavia no pedidas, pero sigue en las que el cliente ya cargo hasta que recargue. Si empieza a cumplirlos, aparece solo si su posicion es posterior al cursor.
+- `isUnread` de cada item y `summary` reflejan el momento de su propia consulta. `summary` y la primera pagina se obtienen con dos consultas simultaneas, no en una transaccion: bajo escrituras concurrentes pueden diferir en alguna discussion. Los contadores quedan desactualizados respecto de las paginas siguientes hasta que se vuelve a pedir la primera pagina.
+
+#### Ejemplos
+
+- Primera pagina: `GET .../workspace/discussions?limit=20` -> `items` (20), `pageInfo: { "nextCursor": "<cursor>", "hasNextPage": true }`, `summary` con contadores.
+- Pagina siguiente: `GET .../workspace/discussions?limit=20&cursor=<cursor>` -> `items` siguientes, `summary: null`.
+- Fin de resultados: la ultima pagina devuelve `pageInfo: { "nextCursor": null, "hasNextPage": false }` (con `items` vacio si no hay ninguna discussion que cumpla los filtros). Si la cantidad total es multiplo exacto de `limit`, la ultima pagina llena ya indica `hasNextPage: false`.
+- Con filtros: `GET .../workspace/discussions?limit=20&status=NEW&assignedToMe=true&unread=true` y, para continuar, los mismos filtros mas `cursor`.
+- Cursor invalido:
+```json
+{
+  "statusCode": 400,
+  "error": "BAD_REQUEST",
+  "message": "Invalid cursor",
+  "timestamp": "ISO-8601",
+  "path": "/api/v1/organizations/<organizationId>/workspace/discussions?cursor=abc"
+}
+```
+
+#### Errores
+- 400 `limit` no numerico o menor a 1, enum invalido (`type`, `status`), booleano invalido (`mine`, `assignedToMe`, `unread`), UUID invalido o ids duplicados en un CSV.
+- 400 `Invalid cursor` / `Cursor does not match the current filters` (ver "Cursor").
+- 403 sin Membership `ACTIVE`.
 
 ### GET /organizations/:organizationId/workspace/discussions/:id
 - Auth: Membership ACTIVE (cualquier role)
@@ -1752,6 +1854,8 @@ Unicidad: `(organizationId, normalizedName)`. `normalizedName` es el `name` reco
 - componentId: UUID valido de components de esa organization
 - discussionId: UUID valido de discussions de esa organization (se captura en Postman al crear la discussion)
 - memberDiscussionId: UUID de una discussion creada por el usuario con role MEMBER (Postman)
+- discussionsCursor: `pageInfo.nextCursor` de la primera pagina del listado de discussions (se captura en Postman; se usa para la pagina siguiente y para los casos de cursor rechazado)
+- discussionsFirstPageId: id de la discussion de esa primera pagina, para comprobar que la pagina siguiente no la repite (Postman)
 - otherComponentId: UUID de un component de otherOrganizationId, para probar aislamiento tenant de relaciones (Postman)
 - tagId: UUID valido de tags de esa organization
 - messageId: UUID valido de discussion_messages de esa discussion (se captura en Postman al crear el mensaje)

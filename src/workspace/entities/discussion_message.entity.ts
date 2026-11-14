@@ -2,6 +2,7 @@ import {
 	Column,
 	CreateDateColumn,
 	Entity,
+	Index,
 	JoinColumn,
 	ManyToOne,
 	PrimaryGeneratedColumn,
@@ -12,6 +13,8 @@ import { DiscussionMessageType } from '../enums/discussion-message-type.enum';
 import { Discussion } from './discussion.entity';
 
 @Entity('discussion_messages')
+// Ultimo mensaje de una Discussion (calculo de "ultima actividad" / no leidas) y sus mensajes por fecha.
+@Index('idx_discussion_messages_discussion_created_at', ['discussion', 'createdAt'])
 export class DiscussionMessage {
 	@PrimaryGeneratedColumn('uuid')
 	id!: string;

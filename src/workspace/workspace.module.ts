@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthModule } from '../auth/auth.module';
 import { User } from '../auth/entities/user.entity';
@@ -39,6 +40,7 @@ import { WorkspaceOrganizationAccessService } from './services/workspace-organiz
 			DiscussionReadState,
 			UserDevice,
 		]),
+		ConfigModule,
 		AuthModule,
 		CloudinaryModule,
 		FirebaseModule,
