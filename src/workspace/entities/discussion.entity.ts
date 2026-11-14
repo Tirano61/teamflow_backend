@@ -23,6 +23,8 @@ import { Organization } from '../../organizations/entities/organization.entity';
 
 @Entity('discussions')
 @Index('idx_discussions_organization_id', ['organizationId'])
+// Listado paginado por cursor: recorre las Discussions de una organizacion por `created_at`.
+@Index('idx_discussions_organization_created_at', ['organizationId', 'createdAt', 'id'])
 export class Discussion {
 	@PrimaryGeneratedColumn('uuid')
 	id!: string;
