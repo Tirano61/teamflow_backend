@@ -241,6 +241,14 @@
 		{
 			"key": "deleteOrganizationDeleted",
 			"value": ""
+		},
+		{
+			"key": "discussionsCursor",
+			"value": ""
+		},
+		{
+			"key": "discussionsFirstPageId",
+			"value": ""
 		}
 	],
 	"item": [
@@ -9446,7 +9454,7 @@
 					"description": "{{otherModuleId}} pertenece a {{otherOrganizationId}} (creada en \"Workspace Catalog Permissions\"). Responde igual que un id inexistente."
 				},
 				{
-					"name": "List discussions",
+					"name": "List discussions - first page with filters and summary",
 					"request": {
 						"method": "GET",
 						"header": [
@@ -9455,7 +9463,7 @@
 								"value": "Bearer {{token}}"
 							}
 						],
-						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/discussions?page=1&limit=20&type=ERROR&status=NEW&moduleIds={{moduleId}}&componentIds={{componentId}}&tagIds={{tagId}}&mine=false&assignedToMe=false&unread=false"
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/discussions?limit=20&type=ERROR&status=NEW&moduleIds={{moduleId}}&componentIds={{componentId}}&tagIds={{tagId}}&mine=false&assignedToMe=false&unread=false"
 					},
 					"event": [
 						{
@@ -9468,14 +9476,32 @@
 									"});",
 									"var data = {};",
 									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta { items, pageInfo, summary }', function () {",
+									"  pm.expect(data.items).to.be.an('array');",
+									"  pm.expect(data.pageInfo).to.be.an('object');",
+									"  pm.expect(data.pageInfo.hasNextPage).to.be.a('boolean');",
+									"  pm.expect(data).to.have.property('summary');",
+									"  pm.expect(data).to.not.have.property('data');",
+									"  pm.expect(data).to.not.have.property('totalPages');",
+									"});",
 									"pm.test('Incluye la discussion creada', function () {",
-									"  var ids = (data.data || []).map(function (d) { return d.id; });",
+									"  var ids = (data.items || []).map(function (d) { return d.id; });",
 									"  pm.expect(ids).to.include(pm.collectionVariables.get('discussionId'));",
+									"});",
+									"pm.test('summary de la primera pagina: total y byStatus con todos los status', function () {",
+									"  pm.expect(data.summary).to.be.an('object');",
+									"  pm.expect(data.summary.total).to.be.a('number');",
+									"  pm.expect(data.summary.byStatus).to.have.all.keys('NEW', 'REVIEW', 'IN_PROGRESS', 'RESOLVED');",
+									"});",
+									"pm.test('Con filtro status: total = byStatus[status] (byStatus no aplica el filtro status)', function () {",
+									"  pm.expect(data.summary.total).to.eql(data.summary.byStatus.NEW);",
+									"  pm.expect(data.summary.total).to.be.at.least(1);",
 									"});"
 								]
 							}
 						}
-					]
+					],
+					"description": "Primera pagina (sin cursor) con filtros. summary.total cuenta todas las discussions que cumplen los filtros; summary.byStatus desglosa por status sin aplicar el filtro status."
 				},
 				{
 					"name": "List assignable developers",
@@ -9875,8 +9901,11 @@
 									"var data = {};",
 									"try { data = pm.response.json(); } catch (e) { data = {}; }",
 									"pm.test('Incluye la discussion asignada', function () {",
-									"  var ids = (data.data || []).map(function (d) { return d.id; });",
+									"  var ids = (data.items || []).map(function (d) { return d.id; });",
 									"  pm.expect(ids).to.include(pm.collectionVariables.get('discussionId'));",
+									"});",
+									"pm.test('summary.total cuenta las discussions asignadas', function () {",
+									"  pm.expect(data.summary.total).to.be.at.least(1);",
 									"});"
 								]
 							}
@@ -10327,6 +10356,21 @@
 								"exec": [
 									"pm.test('Status is 200', function () {",
 									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta { items, pageInfo, summary }', function () {",
+									"  pm.expect(data.items).to.be.an('array');",
+									"  pm.expect(data.pageInfo).to.be.an('object');",
+									"  pm.expect(data.pageInfo.hasNextPage).to.be.a('boolean');",
+									"  pm.expect(data).to.have.property('summary');",
+									"  pm.expect(data).to.not.have.property('data');",
+									"  pm.expect(data).to.not.have.property('totalPages');",
+									"});",
+									"pm.test('summary de la primera pagina: total y byStatus con todos los status', function () {",
+									"  pm.expect(data.summary).to.be.an('object');",
+									"  pm.expect(data.summary.total).to.be.a('number');",
+									"  pm.expect(data.summary.byStatus).to.have.all.keys('NEW', 'REVIEW', 'IN_PROGRESS', 'RESOLVED');",
 									"});"
 								]
 							}
@@ -10365,6 +10409,273 @@
 									"var data = {};",
 									"try { data = pm.response.json(); } catch (e) { data = {}; }",
 									"pm.collectionVariables.set('memberDiscussionId', data.id || '');"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "List discussions - first page (limit=1) and capture cursor",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/discussions?limit=1"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta { items, pageInfo, summary }', function () {",
+									"  pm.expect(data.items).to.be.an('array');",
+									"  pm.expect(data.pageInfo).to.be.an('object');",
+									"  pm.expect(data.pageInfo.hasNextPage).to.be.a('boolean');",
+									"  pm.expect(data).to.have.property('summary');",
+									"  pm.expect(data).to.not.have.property('data');",
+									"  pm.expect(data).to.not.have.property('totalPages');",
+									"});",
+									"pm.test('summary de la primera pagina: total y byStatus con todos los status', function () {",
+									"  pm.expect(data.summary).to.be.an('object');",
+									"  pm.expect(data.summary.total).to.be.a('number');",
+									"  pm.expect(data.summary.byStatus).to.have.all.keys('NEW', 'REVIEW', 'IN_PROGRESS', 'RESOLVED');",
+									"});",
+									"pm.test('Una sola discussion y hay pagina siguiente', function () {",
+									"  pm.expect(data.items.length).to.eql(1);",
+									"  pm.expect(data.pageInfo.hasNextPage).to.eql(true);",
+									"  pm.expect(data.pageInfo.nextCursor).to.be.a('string');",
+									"  pm.expect(data.summary.total).to.be.at.least(2);",
+									"});",
+									"pm.collectionVariables.set('discussionsCursor', (data.pageInfo && data.pageInfo.nextCursor) || '');",
+									"pm.collectionVariables.set('discussionsFirstPageId', (data.items && data.items[0] && data.items[0].id) || '');"
+								]
+							}
+						}
+					],
+					"description": "Primera pagina: sin cursor. Guarda pageInfo.nextCursor en discussionsCursor. Requiere al menos 2 discussions en la organization (la del OWNER y la del MEMBER)."
+				},
+				{
+					"name": "List discussions - next page (cursor)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/discussions?limit=1&cursor={{discussionsCursor}}"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta { items, pageInfo, summary }', function () {",
+									"  pm.expect(data.items).to.be.an('array');",
+									"  pm.expect(data.pageInfo).to.be.an('object');",
+									"  pm.expect(data.pageInfo.hasNextPage).to.be.a('boolean');",
+									"  pm.expect(data).to.have.property('summary');",
+									"  pm.expect(data).to.not.have.property('data');",
+									"  pm.expect(data).to.not.have.property('totalPages');",
+									"});",
+									"pm.test('summary es null fuera de la primera pagina', function () {",
+									"  pm.expect(data.summary).to.eql(null);",
+									"});",
+									"pm.test('Devuelve la discussion siguiente, sin repetir la de la primera pagina', function () {",
+									"  pm.expect(data.items.length).to.eql(1);",
+									"  pm.expect(data.items[0].id).to.not.eql(pm.collectionVariables.get('discussionsFirstPageId'));",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "Pagina siguiente: mismo listado y mismos filtros, con cursor = pageInfo.nextCursor de la pagina anterior."
+				},
+				{
+					"name": "List discussions - end of results (limit=100)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/discussions?limit=100"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Respuesta { items, pageInfo, summary }', function () {",
+									"  pm.expect(data.items).to.be.an('array');",
+									"  pm.expect(data.pageInfo).to.be.an('object');",
+									"  pm.expect(data.pageInfo.hasNextPage).to.be.a('boolean');",
+									"  pm.expect(data).to.have.property('summary');",
+									"  pm.expect(data).to.not.have.property('data');",
+									"  pm.expect(data).to.not.have.property('totalPages');",
+									"});",
+									"pm.test('Fin de resultados: hasNextPage false y nextCursor null', function () {",
+									"  pm.expect(data.items.length).to.be.below(100);",
+									"  pm.expect(data.pageInfo.hasNextPage).to.eql(false);",
+									"  pm.expect(data.pageInfo.nextCursor).to.eql(null);",
+									"});",
+									"pm.test('summary.total = discussions devueltas; byStatus suma total', function () {",
+									"  pm.expect(data.summary.total).to.eql(data.items.length);",
+									"  var s = data.summary.byStatus;",
+									"  pm.expect(s.NEW + s.REVIEW + s.IN_PROGRESS + s.RESOLVED).to.eql(data.summary.total);",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "La organization de pruebas tiene menos de 100 discussions: una sola pagina las trae todas."
+				},
+				{
+					"name": "List discussions - invalid cursor (expect 400)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/discussions?cursor=not-a-cursor"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mensaje: Invalid cursor', function () {",
+									"  pm.expect(String(data.message || '')).to.eql('Invalid cursor');",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "List discussions - cursor with different filters (expect 400)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/discussions?limit=1&status=RESOLVED&cursor={{discussionsCursor}}"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mensaje: Cursor does not match the current filters', function () {",
+									"  pm.expect(String(data.message || '')).to.eql('Cursor does not match the current filters');",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "El cursor se emitio sin filtros: no se puede reutilizar con otros filtros."
+				},
+				{
+					"name": "List discussions - cursor of another user (expect 400)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/discussions?limit=1&cursor={{discussionsCursor}}"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mensaje: Invalid cursor', function () {",
+									"  pm.expect(String(data.message || '')).to.eql('Invalid cursor');",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "El cursor esta ligado al usuario que lo obtuvo (los filtros mine/assignedToMe/unread dependen del usuario)."
+				},
+				{
+					"name": "List discussions - limit below 1 (expect 400)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{organizationId}}/workspace/discussions?limit=0"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mensaje: limit must be greater than 0', function () {",
+									"  pm.expect(String(data.message || '')).to.eql('limit must be greater than 0');",
+									"});"
 								]
 							}
 						}
@@ -12048,6 +12359,38 @@
 						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/workspace/discussions"
 					},
 					"description": "Crea discussion con relaciones WorkModule/Component/Tag, mensaje inicial y read state del OWNER."
+				},
+				{
+					"name": "Cursor of the main organization is rejected in another organization of the same OWNER (expect 400)",
+					"request": {
+						"method": "GET",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/organizations/{{deleteOrganizationId}}/workspace/discussions?limit=1&cursor={{discussionsCursor}}"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mensaje: Invalid cursor', function () {",
+									"  pm.expect(String(data.message || '')).to.eql('Invalid cursor');",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "El OWNER tiene Membership ACTIVE en ambas organizations, pero el cursor esta ligado a la organization donde se obtuvo."
 				},
 				{
 					"name": "OWNER assigns the ADMIN to the discussion (setup)",
