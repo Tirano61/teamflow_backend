@@ -574,3 +574,9 @@ If the task touched the HTTP API, verify that:
 all describe the same contract.
 
 The task is NOT considered complete if API behavior changed and either of these two files was not updated.
+
+---
+
+## Development, run and test processes
+
+Los procesos iniciados para desarrollo, ejecución o pruebas deben detenerse al finalizar la tarea. No dejar servidores, procesos Flutter o puentes ADB ejecutándose innecesariamente. No configurar inicio automático. Antes de detener un proceso, verificar que pertenece al proyecto y no está siendo utilizado por otra tarea.
