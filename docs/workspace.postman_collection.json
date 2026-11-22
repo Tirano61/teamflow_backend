@@ -51,6 +51,10 @@
 			"value": ""
 		},
 		{
+			"key": "deviceId",
+			"value": ""
+		},
+		{
 			"key": "organizationId",
 			"value": ""
 		},
@@ -11873,7 +11877,387 @@
 							"raw": "{\n  \"token\": \"{{deviceToken}}\",\n  \"platform\": \"ANDROID\"\n}"
 						},
 						"url": "{{baseUrl}}/workspace/devices"
-					}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.collectionVariables.set('deviceId', data.id || '');",
+									"pm.test('Devuelve solo el registro propio', function () {",
+									"  pm.expect(data.fcmToken).to.eql(pm.collectionVariables.get('deviceToken'));",
+									"  pm.expect(data.platform).to.eql('ANDROID');",
+									"  pm.expect(Object.keys(data.user || {})).to.eql(['id']);",
+									"  pm.expect(data.lastSeenAt).to.be.a('string');",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "Registra {{deviceToken}} para el usuario autenticado y guarda {{deviceId}}. Si el token era de otro usuario, se reasigna."
+				},
+				{
+					"name": "Register same device token again - idempotent (auth)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"{{deviceToken}}\",\n  \"platform\": \"ANDROID\"\n}"
+						},
+						"url": "{{baseUrl}}/workspace/devices"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mismo registro (mismo id), sin duplicados', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('deviceId'));",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "Repetir el registro del mismo token no crea otra fila: actualiza platform y lastSeenAt."
+				},
+				{
+					"name": "Register device token without auth -> 401",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"{{deviceToken}}\",\n  \"platform\": \"ANDROID\"\n}"
+						},
+						"url": "{{baseUrl}}/workspace/devices"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 401', function () {",
+									"  pm.response.to.have.status(401);",
+									"});"
+								]
+							}
+						}
+					]
+				},
+				{
+					"name": "Register device token with short token -> 400",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"short\",\n  \"platform\": \"ANDROID\"\n}"
+						},
+						"url": "{{baseUrl}}/workspace/devices"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "token debe tener entre 10 y 4096 caracteres."
+				},
+				{
+					"name": "Register device token with invalid platform -> 400",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"{{deviceToken}}\",\n  \"platform\": \"IOS\"\n}"
+						},
+						"url": "{{baseUrl}}/workspace/devices"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "Solo se acepta platform ANDROID."
+				},
+				{
+					"name": "Register device token with extra property -> 400",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"{{deviceToken}}\",\n  \"platform\": \"ANDROID\",\n  \"userId\": \"{{invitedUserId}}\"\n}"
+						},
+						"url": "{{baseUrl}}/workspace/devices"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 400', function () {",
+									"  pm.response.to.have.status(400);",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "No se puede registrar un token a nombre de otro usuario: el dueno siempre es el usuario del JWT y las propiedades extra se rechazan."
+				},
+				{
+					"name": "Reassign device token to invited user (invited user auth)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{invitedUserToken}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"{{deviceToken}}\",\n  \"platform\": \"ANDROID\"\n}"
+						},
+						"url": "{{baseUrl}}/workspace/devices"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('El mismo registro pasa al usuario invitado', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('deviceId'));",
+									"  pm.expect(data.user.id).to.eql(pm.collectionVariables.get('invitedUserId'));",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "Simula otra cuenta iniciando sesion en el mismo dispositivo. Requiere {{invitedUserToken}} / {{invitedUserId}} (carpeta Organizations). Desde aca el usuario anterior deja de recibir push en este dispositivo."
+				},
+				{
+					"name": "Unregister reassigned token as previous owner -> 404 (auth)",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"{{deviceToken}}\"\n}"
+						},
+						"url": "{{baseUrl}}/workspace/devices"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 404', function () {",
+									"  pm.response.to.have.status(404);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('No revela que el token es de otro usuario', function () {",
+									"  pm.expect(data.message).to.eql('Device token not found for current user');",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "Un usuario no puede eliminar el registro de otro: mismo 404 que un token inexistente, y el registro del invitado no se toca."
+				},
+				{
+					"name": "Register device token back to owner (auth)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"{{deviceToken}}\",\n  \"platform\": \"ANDROID\"\n}"
+						},
+						"url": "{{baseUrl}}/workspace/devices"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201', function () {",
+									"  pm.response.to.have.status(201);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('El registro vuelve al usuario autenticado', function () {",
+									"  pm.expect(data.id).to.eql(pm.collectionVariables.get('deviceId'));",
+									"  pm.expect(data.user.id).to.not.eql(pm.collectionVariables.get('invitedUserId'));",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "Restaura el dueno del token para el resto de la carpeta."
+				},
+				{
+					"name": "Send test push to current user (auth)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Authorization",
+								"value": "Bearer {{token}}"
+							}
+						],
+						"url": "{{baseUrl}}/workspace/notifications/test"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 201 or 503', function () {",
+									"  pm.expect(pm.response.code).to.be.oneOf([201, 503]);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"if (pm.response.code === 201) {",
+									"  pm.test('Resumen sin tokens', function () {",
+									"    pm.expect(data).to.have.all.keys('totalDevices', 'successCount', 'failureCount', 'removedInvalidTokens', 'failuresByCode');",
+									"    pm.expect(JSON.stringify(data)).to.not.include(pm.collectionVariables.get('deviceToken'));",
+									"  });",
+									"} else {",
+									"  pm.test('503 cuando Firebase rechaza el envio completo', function () {",
+									"    pm.expect(data.message).to.eql('Push notification service is not available');",
+									"  });",
+									"}"
+								]
+							}
+						}
+					],
+					"description": "ENVIA PUSH REALES a todos los dispositivos registrados del usuario autenticado. 503 si Firebase no esta configurado (credencial inexistente o invalida). Con un {{deviceToken}} ficticio ese dispositivo falla con messaging/invalid-argument y solo se elimina si otro dispositivo del usuario recibio el push."
+				},
+				{
+					"name": "Send test push without auth -> 401",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": "{{baseUrl}}/workspace/notifications/test"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 401', function () {",
+									"  pm.response.to.have.status(401);",
+									"});"
+								]
+							}
+						}
+					]
 				},
 				{
 					"name": "Unregister device token (auth)",
@@ -11894,22 +12278,94 @@
 							"raw": "{\n  \"token\": \"{{deviceToken}}\"\n}"
 						},
 						"url": "{{baseUrl}}/workspace/devices"
-					}
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 200', function () {",
+									"  pm.response.to.have.status(200);",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "Elimina solo el registro de {{deviceToken}} del usuario autenticado; sus otros dispositivos se conservan."
 				},
 				{
-					"name": "Send test push to current user (auth)",
+					"name": "Unregister device token again -> 404 (auth)",
 					"request": {
-						"method": "POST",
+						"method": "DELETE",
 						"header": [
 							{
 								"key": "Authorization",
 								"value": "Bearer {{token}}"
+							},
+							{
+								"key": "Content-Type",
+								"value": "application/json"
 							}
 						],
-						"url": "{{baseUrl}}/workspace/notifications/test"
-					}
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"{{deviceToken}}\"\n}"
+						},
+						"url": "{{baseUrl}}/workspace/devices"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 404', function () {",
+									"  pm.response.to.have.status(404);",
+									"});",
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Mensaje de token inexistente', function () {",
+									"  pm.expect(data.message).to.eql('Device token not found for current user');",
+									"});"
+								]
+							}
+						}
+					],
+					"description": "El cliente puede tratar este 404 como \"ya desregistrado\"."
+				},
+				{
+					"name": "Unregister device token without auth -> 401",
+					"request": {
+						"method": "DELETE",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"token\": \"{{deviceToken}}\"\n}"
+						},
+						"url": "{{baseUrl}}/workspace/devices"
+					},
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"pm.test('Status is 401', function () {",
+									"  pm.response.to.have.status(401);",
+									"});"
+								]
+							}
+						}
+					]
 				}
-			]
+			],
+			"description": "Rutas globales (sin organizationId). Orden: registrar, idempotencia, validaciones, reasignacion a otra cuenta, restaurar, push de prueba (real), desregistrar. Ver docs/workspace-endpoints.md: \"Devices (FCM)\" y \"Push automaticas de eventos\"."
 		},
 		{
 			"name": "Organization Deletion",

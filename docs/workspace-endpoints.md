@@ -709,9 +709,17 @@ Crear y listar mensajes requiere Membership ACTIVE con cualquier role. Editar y 
 
 ## Devices (FCM)
 
+Rutas globales (sin `organizationId`): un token FCM identifica una instalacion de la app y pertenece a un usuario, no a una organization. Un mismo token tiene un unico registro (`fcm_token` es unico en `user_devices`).
+
 ### POST /workspace/devices
 - Auth: Usuario autenticado
-- Descripcion: Registra o actualiza (idempotente) el dispositivo FCM del usuario autenticado.
+- Descripcion: Registra el token FCM para el usuario autenticado. Es idempotente y atomico (una sola sentencia `INSERT ... ON CONFLICT (fcm_token) DO UPDATE`):
+  - token nuevo: crea el registro;
+  - mismo token del mismo usuario: conserva el registro (mismo `id`) y actualiza `platform` y `lastSeenAt`;
+  - token registrado por otro usuario (por ejemplo, otra cuenta inicio sesion en el mismo dispositivo): el registro se **reasigna** al usuario autenticado; el usuario anterior deja de recibir push en ese dispositivo. La reasignacion se registra en el log del backend con el id del registro y de ambos usuarios (nunca el token).
+  - dos registros concurrentes del mismo token no generan duplicados ni errores: queda como dueno el ultimo que confirma.
+  - el token se recorta (`trim`) antes de guardarse.
+- `lastSeenAt` es la hora de PostgreSQL del ultimo registro. La app vuelve a registrar el token al iniciar sesion, al arrancar con una sesion guardada y cuando Firebase lo renueva, asi que refleja la ultima vez que el dispositivo tuvo una sesion activa.
 - Body:
 ```json
 {
@@ -719,23 +727,46 @@ Crear y listar mensajes requiere Membership ACTIVE con cualquier role. Editar y 
   "platform": "ANDROID"
 }
 ```
+- Respuesta 201 (solo el registro propio; nunca expone otros usuarios ni sus tokens):
+```json
+{
+  "id": "UUID",
+  "user": { "id": "UUID" },
+  "fcmToken": "fcm_registration_token_android",
+  "platform": "ANDROID",
+  "lastSeenAt": "2026-11-22T12:00:00.000Z",
+  "createdAt": "2026-11-22T12:00:00.000Z",
+  "updatedAt": "2026-11-22T12:00:00.000Z"
+}
+```
+- Errores: 400 `token` ausente, no string, menor a 10 o mayor a 4096 caracteres, `platform` distinto de `ANDROID` o propiedades extra; 401 sin JWT valido.
 
 ### DELETE /workspace/devices
 - Auth: Usuario autenticado
-- Descripcion: Desregistra un token FCM del usuario autenticado.
+- Descripcion: Desregistra un token FCM **solo si pertenece al usuario autenticado**. No borra los demas dispositivos del usuario.
 - Body:
 ```json
 {
   "token": "fcm_registration_token_android"
 }
 ```
+- Respuesta 200 sin cuerpo.
+- Errores: 400 validacion del body (mismas reglas de `token`); 401 sin JWT valido; 404 `Device token not found for current user` cuando el token no existe, ya fue eliminado o fue reasignado a otro usuario (no se distingue cual, y el registro de otro usuario no se toca). Para el cliente, un 404 en el logout equivale a "este usuario ya no recibe push en este dispositivo".
+
+### Logout sin conexion y sesiones vencidas (limitacion)
+- El backend no recibe ningun evento si la app cierra sesion sin red o si la sesion local deja de ser valida: el token sigue asociado al usuario anterior hasta que ocurra alguna de estas cosas:
+  1. otro usuario inicia sesion en ese dispositivo y registra el token (`POST /workspace/devices` lo reasigna);
+  2. Firebase rechaza el token de forma definitiva en un envio y el backend lo elimina (ver "Push automaticas de eventos");
+  3. la app desregistra el token cuando vuelve a tener red;
+  4. si se configura `FCM_DEVICE_STALE_AFTER_DAYS`, el dispositivo deja de recibir push automaticas cuando pasa esa cantidad de dias sin registrarse (no se borra el registro).
+- Mientras tanto, el dispositivo puede seguir recibiendo push del usuario anterior. Cada push incluye `data.recipientUserId` para que la app pueda descartar o no abrir una notificacion que no corresponde a la sesion actual. El backend no puede revocar el token de forma inmediata sin comunicacion con el dispositivo.
 
 ## Notifications
 
 ### POST /workspace/notifications/test
 - Auth: Usuario autenticado
-- Descripcion: Envia push de prueba al usuario autenticado (todos sus dispositivos registrados).
-- Payload enviado por backend:
+- Descripcion: Envia un push de prueba **real** a todos los dispositivos registrados del usuario autenticado. A diferencia de las push automaticas, esta peticion espera la respuesta de Firebase.
+- Payload enviado por backend (uno por dispositivo):
 ```json
 {
   "notification": {
@@ -743,10 +774,27 @@ Crear y listar mensajes requiere Membership ACTIVE con cualquier role. Editar y 
     "body": "Prueba desde NestJS"
   },
   "data": {
-    "type": "TEST"
+    "type": "TEST",
+    "recipientUserId": "UUID"
   }
 }
 ```
+- Respuesta 201 (no incluye tokens):
+```json
+{
+  "totalDevices": 2,
+  "successCount": 1,
+  "failureCount": 1,
+  "removedInvalidTokens": 1,
+  "failuresByCode": {
+    "messaging/registration-token-not-registered": 1
+  }
+}
+```
+  - `failuresByCode`: cantidad de dispositivos que fallaron por codigo de Firebase. Los fallos de un dispositivo no cambian el status HTTP.
+  - `removedInvalidTokens`: registros eliminados por ser rechazados de forma definitiva (misma regla que las push automaticas).
+  - Sin dispositivos registrados: 201 con todos los contadores en 0.
+- Errores: 401 sin JWT valido; 503 `Push notification service is not available` cuando Firebase rechaza el envio completo (credencial inexistente o invalida, project id no determinable, red). El detalle queda en el log del backend.
 
 ## Organizations
 
@@ -1651,14 +1699,33 @@ El flujo completo de eliminacion esta en la carpeta "Organization Deletion" de l
 
 ### Push automaticas de eventos (Fase 8B)
 - No crea endpoints nuevos: se disparan desde endpoints funcionales existentes.
-- Regla de destinatarios: usuarios activos (`isActive = true`) con al menos un device en `user_devices`.
-- Exclusiones: nunca se envia push al usuario actor que genero el evento.
-- Si un usuario activo no tiene devices, no se envia y no genera error.
-- Todos los valores del objeto `data` se envian como string.
-- Prioridad Android: `high` para visible y silent sync.
+- Regla de destinatarios (todos los eventos de Discussions): todos los dispositivos de usuarios activos (`isActive = true`) con Membership `ACTIVE` en la organization de la Discussion, de cualquier role. Coincide con quien puede leer la Discussion (cualquier Membership `ACTIVE`). No se limita a asignados, creador o participantes.
+- Exclusiones: nunca se envia push al usuario actor que genero el evento (en ninguno de sus dispositivos).
+- Memberships `SUSPENDED` o `LEFT`, memberships eliminadas, usuarios inactivos y miembros de otras organizations no reciben nada. La Membership se evalua al momento del envio: si cambia antes, ya no se envia; si cambia mientras Firebase entrega un envio en curso, ese push puede llegar.
+- Un usuario miembro de varias organizations recibe los push de cada una, siempre con el `organizationId` de la organization del evento.
+- Si un usuario no tiene devices, no se envia y no genera error.
 - Infraestructura centralizada:
   - `VISIBLE`: incluye `notification { title, body }` + `data`.
   - `DATA_ONLY`: incluye solo `data` (sin `notification`).
+  - Prioridad Android: `high` para visible y silent sync.
+  - Se envia un mensaje por dispositivo (`sendEach`, en lotes de 500).
+
+Contrato de `data` (comun a todos los eventos de Discussions):
+
+| Campo | Siempre | Descripcion |
+| ----- | ------- | ----------- |
+| `type` | si | Tipo de evento (`DISCUSSION_CREATED`, `DISCUSSION_MESSAGE`, `DISCUSSION_STATUS_CHANGED`, `DISCUSSION_ASSIGNMENT_CHANGED`, `DISCUSSION_MESSAGE_UPDATED`, `DISCUSSION_MESSAGE_DELETED`, `DISCUSSION_CONTEXT_CHANGED`). |
+| `organizationId` | si | UUID de la organization de la Discussion. Es la misma organization usada para elegir destinatarios. |
+| `discussionId` | si | UUID de la Discussion. |
+| `recipientUserId` | si | UUID del usuario para el que se envio a ese dispositivo. |
+| `messageId` | segun evento | Mensajes nuevos, editados y eliminados. |
+| `messageType` | segun evento | Mensajes nuevos (`TEXT`, `IMAGE`, `AUDIO`, `VIDEO`, `FILE`). |
+| `status` | segun evento | Cambio de estado. |
+
+- Todos los valores son string no vacios. Si un evento tuviera un valor vacio, no se envia y se registra un error en el log.
+- Los ids del push no otorgan acceso: la app debe abrir la Discussion con las rutas tenant (`/organizations/:organizationId/workspace/...`), que validan Membership `ACTIVE` y responden 403/404 como siempre. Uso esperado en la app: si `recipientUserId` no es el usuario de la sesion, ignorar el push; si `organizationId` no esta entre las organizations del usuario (`GET /me/context`), no navegar; si esta, activarla y abrir `discussionId`.
+- El push de prueba (`POST /workspace/notifications/test`) es global: `type = TEST` + `recipientUserId`, sin `organizationId`.
+- Cambio respecto de la version anterior: los payloads no incluian `organizationId` ni `recipientUserId`.
 
 Eventos visibles implementados:
 
@@ -1790,10 +1857,45 @@ Eventos silent sync implementados (data-only):
 }
 ```
 
+Los ejemplos de payload de cada evento muestran los campos propios; ademas, todos llevan `organizationId` y `recipientUserId` (ver "Contrato de `data`").
+
 Notas operativas:
 - El envio push/silent sync no revierte operaciones funcionales (discussion, message, status, assignment o contexto) si Firebase falla.
-- Se mantiene la limpieza automatica de tokens invalidos de Fase 8A.
+- Entrega en segundo plano: el endpoint funcional responde sin esperar la consulta de destinatarios, el envio a Firebase ni la limpieza de tokens. Los errores se registran en el log (`Workspace push event=... failed code=...`).
+
+Garantias de entrega (mecanismo actual, en memoria y sin cola persistente):
+- **No garantiza la entrega ante una caida del proceso.** El envio arranca despues de confirmar la operacion y corre en memoria del proceso. Si el proceso termina antes de que Firebase acepte los mensajes, ese push se pierde sin reintento y no queda registro pendiente. Esto incluye: caida o `kill`, reinicio por deploy (Render envia `SIGTERM`; el backend no habilita `enableShutdownHooks` ni maneja la senal, asi que termina sin esperar envios en curso) y reinicios del modo watch en desarrollo. La ventana tipica es de unos cientos de ms por evento (1 consulta + llamada a Firebase).
+- A lo sumo una vez por evento y dispositivo: no hay reintentos, tampoco ante errores transitorios de Firebase.
+- "Aceptado por Firebase" (`successCount`) no significa "mostrado en el dispositivo": la entrega final depende de FCM y del dispositivo.
+- El orden de llegada entre eventos de la misma Discussion no esta garantizado (Firebase tampoco lo garantiza).
+- La operacion funcional (Discussion, mensaje, estado, asignacion, contexto) nunca se revierte por un fallo del push: el envio empieza despues de confirmada la escritura y sus errores no llegan a la respuesta HTTP.
+- La app no debe depender del push para mantener datos correctos: los silent sync son una senal de refresco, y al abrir o volver a la app debe consultar la API.
+- Costo por evento: 1 consulta (destinatarios + dispositivos), 1 llamada a Firebase por cada lote de hasta 500 dispositivos y, solo si hubo tokens invalidos, 1 `DELETE`.
 - No se actualiza `lastReadAt` por enviar push; read/unread sigue independiente.
+
+Manejo de errores de Firebase (por dispositivo):
+
+| Codigo | Tratamiento |
+| ------ | ----------- |
+| `messaging/registration-token-not-registered`, `messaging/invalid-registration-token` | Token invalido: se elimina. |
+| `messaging/invalid-argument`, `messaging/mismatched-credential` | Se elimina solo si otro mensaje del mismo envio fue aceptado (el payload y la credencial son validos, el problema es el token: formato invalido o token de otro proyecto Firebase). Si todos fallaron, se conserva. |
+| `messaging/server-unavailable`, `messaging/internal-error`, `messaging/message-rate-exceeded`, `messaging/device-message-rate-exceeded`, `app/network-error`, `app/network-timeout` | Transitorio: se conserva. No se reintenta. |
+| `app/invalid-credential`, `messaging/authentication-error`, `messaging/third-party-auth-error` | Configuracion: se conserva. |
+| Cualquier otro | Se conserva. |
+
+- La eliminacion borra el token solo si sigue perteneciendo al usuario para el que se envio: si en el medio se reasigno a otra cuenta, no se toca.
+- Los fallos se registran agrupados por codigo, con un mensaje de ejemplo por codigo. Los logs nunca incluyen tokens.
+- Si Firebase rechaza el envio completo (por ejemplo, credencial inexistente), no se elimina ningun token.
+- `FCM_DEVICE_STALE_AFTER_DAYS` (opcional, entero positivo): las push automaticas omiten los dispositivos cuyo `lastSeenAt` es anterior a esa cantidad de dias. No borra registros y no aplica al push de prueba. Sin definir, no se filtra por antiguedad.
+
+### Configuracion de Firebase Admin
+- Variables:
+  - `GOOGLE_APPLICATION_CREDENTIALS`: ruta absoluta al JSON de la service account del proyecto Firebase de la app (el mismo `project_id` que `google-services.json` / `firebase_options.dart` de Flutter). El archivo debe estar **fuera** de cualquier repositorio.
+  - `FIREBASE_PROJECT_ID` (opcional): si no se define, se toma de la service account.
+- `applicationDefault()` no valida la credencial al iniciar: el backend arranca igual y el error aparece en el primer envio (`ENOENT` o `app/invalid-credential`). Al iniciar se registra un error si `GOOGLE_APPLICATION_CREDENTIALS` apunta a un archivo inexistente (solo el nombre del archivo) y una advertencia si la variable no esta definida.
+- Una service account de otro proyecto Firebase produce `messaging/mismatched-credential` en todos los envios; como fallan todos, no se borran tokens.
+- Desarrollo local: definir la variable en `.env` (no versionado) apuntando al JSON local y reiniciar el backend. Probar con `POST /workspace/notifications/test` envia un push real a los dispositivos del usuario autenticado.
+- Render: cargar el JSON como Secret File (Render lo monta en `/etc/secrets/<nombre-del-archivo>`) y definir `GOOGLE_APPLICATION_CREDENTIALS` con esa ruta. No subir el JSON a la imagen ni al repositorio.
 
 ## Tags
 
@@ -1860,7 +1962,8 @@ Unicidad: `(organizationId, normalizedName)`. `normalizedName` es el `name` reco
 - tagId: UUID valido de tags de esa organization
 - messageId: UUID valido de discussion_messages de esa discussion (se captura en Postman al crear el mensaje)
 - developerUserId: UUID de un user con Membership ACTIVE asignable en esa organization (role OWNER, ADMIN o DEVELOPER)
-- deviceToken: FCM registration token valido de Android
+- deviceToken: FCM registration token de Android. Puede ser un valor de prueba (>= 10 caracteres) para registrar/reasignar/desregistrar; el push de prueba es real y tambien llega a los demas dispositivos registrados del usuario
+- deviceId: id del registro de `deviceToken` (se captura en Postman al registrarlo; se usa para comprobar idempotencia y reasignacion)
 - securityVerificationId: UUID de una security verification del usuario autenticado en esa organization (se captura en Postman al solicitar el codigo)
 - securityVerificationCode: codigo de 6 digitos recibido por email; se completa a mano (Postman nunca lo recibe del backend)
 
