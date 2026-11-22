@@ -71,6 +71,37 @@ export class WorkspaceNotificationService {
 		);
 	}
 
+	/**
+	 * La operacion funcional ya se confirmo: el push es de mejor esfuerzo y no debe demorar la
+	 * respuesta HTTP (consulta de destinatarios + envio a Firebase + limpieza de tokens). Se lanza
+	 * sin esperar y sus errores se registran aca. La Promise devuelta se resuelve de inmediato, asi
+	 * los llamadores conservan su `await` y su manejo de errores. Si el proceso se detiene en ese
+	 * intervalo, el push se pierde (igual que si Firebase fallara).
+	 */
+	private dispatchInBackground(
+		organizationId: string,
+		actorUserId: string,
+		eventType: string,
+		discussionId: string,
+		payload: WorkspaceNotificationPayload,
+	): Promise<void> {
+		void this.dispatchToActiveUsers(
+			organizationId,
+			actorUserId,
+			eventType,
+			discussionId,
+			payload,
+		).catch((error: unknown) => {
+			const code = (error as { code?: string } | null)?.code ?? 'unknown';
+			const reason = error instanceof Error ? error.message.slice(0, 300) : 'unknown';
+			this.logger.warn(
+				`Workspace push event=${eventType} organizationId=${organizationId} discussionId=${discussionId} failed code=${code} reason=${reason}`,
+			);
+		});
+
+		return Promise.resolve();
+	}
+
 	private buildVisiblePayload(
 		title: string,
 		body: string,
@@ -91,7 +122,7 @@ export class WorkspaceNotificationService {
 		};
 	}
 
-	async notifyDiscussionCreated(
+	notifyDiscussionCreated(
 		discussion: Discussion,
 		actor: User,
 	): Promise<void> {
@@ -105,7 +136,7 @@ export class WorkspaceNotificationService {
 			},
 		);
 
-		await this.dispatchToActiveUsers(
+		return this.dispatchInBackground(
 			discussion.organizationId,
 			actor.id,
 			'DISCUSSION_CREATED',
@@ -152,7 +183,7 @@ export class WorkspaceNotificationService {
 		}
 	}
 
-	async notifyDiscussionMessageCreated(
+	notifyDiscussionMessageCreated(
 		discussion: Discussion,
 		message: DiscussionMessage,
 		actor: User,
@@ -171,7 +202,7 @@ export class WorkspaceNotificationService {
 			},
 		);
 
-		await this.dispatchToActiveUsers(
+		return this.dispatchInBackground(
 			discussion.organizationId,
 			actor.id,
 			'DISCUSSION_MESSAGE',
@@ -180,7 +211,7 @@ export class WorkspaceNotificationService {
 		);
 	}
 
-	async notifyDiscussionStatusChanged(
+	notifyDiscussionStatusChanged(
 		discussion: Discussion,
 		actor: User,
 	): Promise<void> {
@@ -197,7 +228,7 @@ export class WorkspaceNotificationService {
 			},
 		);
 
-		await this.dispatchToActiveUsers(
+		return this.dispatchInBackground(
 			discussion.organizationId,
 			actor.id,
 			'DISCUSSION_STATUS_CHANGED',
@@ -206,7 +237,7 @@ export class WorkspaceNotificationService {
 		);
 	}
 
-	async notifyDiscussionAssignmentChanged(
+	notifyDiscussionAssignmentChanged(
 		discussion: Discussion,
 		actor: User,
 	): Promise<void> {
@@ -220,7 +251,7 @@ export class WorkspaceNotificationService {
 			},
 		);
 
-		await this.dispatchToActiveUsers(
+		return this.dispatchInBackground(
 			discussion.organizationId,
 			actor.id,
 			'DISCUSSION_ASSIGNMENT_CHANGED',
@@ -229,7 +260,7 @@ export class WorkspaceNotificationService {
 		);
 	}
 
-	async syncMessageUpdated(
+	syncMessageUpdated(
 		organizationId: string,
 		discussionId: string,
 		messageId: string,
@@ -242,7 +273,7 @@ export class WorkspaceNotificationService {
 			messageId,
 		});
 
-		await this.dispatchToActiveUsers(
+		return this.dispatchInBackground(
 			organizationId,
 			actor.id,
 			'DISCUSSION_MESSAGE_UPDATED',
@@ -251,7 +282,7 @@ export class WorkspaceNotificationService {
 		);
 	}
 
-	async syncMessageDeleted(
+	syncMessageDeleted(
 		organizationId: string,
 		discussionId: string,
 		messageId: string,
@@ -264,7 +295,7 @@ export class WorkspaceNotificationService {
 			messageId,
 		});
 
-		await this.dispatchToActiveUsers(
+		return this.dispatchInBackground(
 			organizationId,
 			actor.id,
 			'DISCUSSION_MESSAGE_DELETED',
@@ -273,7 +304,7 @@ export class WorkspaceNotificationService {
 		);
 	}
 
-	async syncDiscussionContextChanged(
+	syncDiscussionContextChanged(
 		organizationId: string,
 		discussionId: string,
 		actor: User,
@@ -284,7 +315,7 @@ export class WorkspaceNotificationService {
 			discussionId,
 		});
 
-		await this.dispatchToActiveUsers(
+		return this.dispatchInBackground(
 			organizationId,
 			actor.id,
 			'DISCUSSION_CONTEXT_CHANGED',
