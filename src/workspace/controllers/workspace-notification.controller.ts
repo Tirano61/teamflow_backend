@@ -1,4 +1,4 @@
-import { Controller, Post } from '@nestjs/common';
+import { Controller, Logger, Post, ServiceUnavailableException } from '@nestjs/common';
 import { Auth } from '../../auth/decorators/auth.decorator';
 import { GetUser } from '../../auth/decorators/get-user.decorator';
 import { User } from '../../auth/entities/user.entity';
@@ -6,18 +6,28 @@ import { WorkspacePushNotificationService } from '../services/workspace-push-not
 
 @Controller('workspace')
 export class WorkspaceNotificationController {
+	private readonly logger = new Logger(WorkspaceNotificationController.name);
+
 	constructor(private readonly notificationService: WorkspacePushNotificationService) { }
 
 	@Post('notifications/test')
 	@Auth()
-	sendTestNotification(@GetUser() user: User) {
-		return this.notificationService.sendToUser(user.id, {
-			kind: 'VISIBLE',
-			title: 'Workspace',
-			body: 'Prueba desde NestJS',
-			data: {
-				type: 'TEST',
-			},
-		});
+	async sendTestNotification(@GetUser() user: User) {
+		try {
+			return await this.notificationService.sendToUser(user.id, {
+				kind: 'VISIBLE',
+				title: 'Workspace',
+				body: 'Prueba desde NestJS',
+				data: {
+					type: 'TEST',
+				},
+			});
+		} catch (error) {
+			// Firebase rechazo el envio completo (credencial, project id o red). Los fallos por
+			// dispositivo no llegan aca: se informan en `failuresByCode`.
+			const code = (error as { code?: string } | null)?.code ?? 'unknown';
+			this.logger.warn(`Test push could not be sent userId=${user.id} code=${code}`);
+			throw new ServiceUnavailableException('Push notification service is not available');
+		}
 	}
 }

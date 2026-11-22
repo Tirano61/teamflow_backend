@@ -1,13 +1,22 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
 import { User } from '../../auth/entities/user.entity';
-import { MembershipStatus } from '../../memberships/enums/membership-status.enum';
 import { Discussion } from '../entities/discussion.entity';
 import { DiscussionMessage } from '../entities/discussion_message.entity';
 import { DiscussionMessageType } from '../enums/discussion-message-type.enum';
 import { DiscussionStatus } from '../enums/discussion-status.enum';
+import { UserDeviceService } from './user-device.service';
 import { WorkspaceNotificationPayload, WorkspacePushNotificationService } from './workspace-push-notification.service';
+
+/**
+ * Datos comunes a todos los push de Discussions. `organizationId` es siempre la organization de la
+ * Discussion, la misma que se usa para elegir destinatarios. `recipientUserId` lo agrega
+ * `WorkspacePushNotificationService` por dispositivo.
+ */
+type DiscussionPushData = {
+	type: string;
+	organizationId: string;
+	discussionId: string;
+} & Record<string, string>;
 
 @Injectable()
 export class WorkspaceNotificationService {
@@ -21,33 +30,9 @@ export class WorkspaceNotificationService {
 	};
 
 	constructor(
-		@InjectRepository(User)
-		private readonly userRepository: Repository<User>,
+		private readonly userDeviceService: UserDeviceService,
 		private readonly notificationService: WorkspacePushNotificationService,
 	) { }
-
-	private async findActiveRecipientUserIdsExcludingActor(
-		organizationId: string,
-		actorUserId: string,
-	): Promise<string[]> {
-		const rows = await this.userRepository
-			.createQueryBuilder('user')
-			.innerJoin('user.userDevices', 'device')
-			.innerJoin('user.memberships', 'membership')
-			.select('user.id', 'id')
-			.where('user.isActive = true')
-			.andWhere('membership.organization_id = :organizationId', {
-				organizationId,
-			})
-			.andWhere('membership.status = :activeStatus', {
-				activeStatus: MembershipStatus.ACTIVE,
-			})
-			.andWhere('user.id <> :actorUserId', { actorUserId })
-			.distinct(true)
-			.getRawMany<{ id: string }>();
-
-		return rows.map((row) => row.id);
-	}
 
 	private async dispatchToActiveUsers(
 		organizationId: string,
@@ -56,32 +41,40 @@ export class WorkspaceNotificationService {
 		discussionId: string,
 		payload: WorkspaceNotificationPayload,
 	): Promise<void> {
-		const recipientUserIds = await this.findActiveRecipientUserIdsExcludingActor(
-			organizationId,
-			actorUserId,
-		);
-
-		if (!recipientUserIds.length) {
-			this.logger.log(
-				`Workspace push event=${eventType} discussionId=${discussionId} recipients=0 successCount=0 failureCount=0`,
+		const invalidKey = Object.entries(payload.data ?? {}).find(
+			([, value]) => typeof value !== 'string' || value.length === 0,
+		)?.[0];
+		if (invalidKey || payload.data?.organizationId !== organizationId) {
+			// Un valor vacio o no string haria que Firebase rechace el mensaje completo.
+			this.logger.error(
+				`Workspace push event=${eventType} discussionId=${discussionId} skipped: invalid data field ${invalidKey ?? 'organizationId'}`,
 			);
 			return;
 		}
 
-		const result = await this.notificationService.sendToUsers(
-			recipientUserIds,
-			payload,
+		const devices = await this.userDeviceService.findPushRecipientsForOrganization(
+			organizationId,
+			actorUserId,
 		);
 
+		if (!devices.length) {
+			this.logger.log(
+				`Workspace push event=${eventType} organizationId=${organizationId} discussionId=${discussionId} recipients=0 devices=0`,
+			);
+			return;
+		}
+
+		const result = await this.notificationService.sendToDevices(devices, payload);
+
 		this.logger.log(
-			`Workspace push event=${eventType} discussionId=${discussionId} recipients=${result.totalUsers} devices=${result.totalDevices} successCount=${result.successCount} failureCount=${result.failureCount} removedInvalidTokens=${result.removedInvalidTokens}`,
+			`Workspace push event=${eventType} organizationId=${organizationId} discussionId=${discussionId} recipients=${result.totalUsers} devices=${result.totalDevices} successCount=${result.successCount} failureCount=${result.failureCount} removedInvalidTokens=${result.removedInvalidTokens}`,
 		);
 	}
 
 	private buildVisiblePayload(
 		title: string,
 		body: string,
-		data: Record<string, string>,
+		data: DiscussionPushData,
 	): WorkspaceNotificationPayload {
 		return {
 			kind: 'VISIBLE',
@@ -91,7 +84,7 @@ export class WorkspaceNotificationService {
 		};
 	}
 
-	private buildSilentPayload(data: Record<string, string>): WorkspaceNotificationPayload {
+	private buildSilentPayload(data: DiscussionPushData): WorkspaceNotificationPayload {
 		return {
 			kind: 'DATA_ONLY',
 			data,
@@ -107,6 +100,7 @@ export class WorkspaceNotificationService {
 			`${actor.fullName} creó: ${discussion.title}`,
 			{
 				type: 'DISCUSSION_CREATED',
+				organizationId: discussion.organizationId,
 				discussionId: discussion.id,
 			},
 		);
@@ -170,6 +164,7 @@ export class WorkspaceNotificationService {
 			`${actor.fullName} ${presentation.bodySuffix}: ${discussion.title}`,
 			{
 				type: 'DISCUSSION_MESSAGE',
+				organizationId: discussion.organizationId,
 				discussionId: discussion.id,
 				messageId: message.id,
 				messageType: message.type,
@@ -196,6 +191,7 @@ export class WorkspaceNotificationService {
 			`${actor.fullName} movió "${discussion.title}" a ${visibleStatus}`,
 			{
 				type: 'DISCUSSION_STATUS_CHANGED',
+				organizationId: discussion.organizationId,
 				discussionId: discussion.id,
 				status: discussion.status,
 			},
@@ -219,6 +215,7 @@ export class WorkspaceNotificationService {
 			`${actor.fullName} actualizó responsables de: ${discussion.title}`,
 			{
 				type: 'DISCUSSION_ASSIGNMENT_CHANGED',
+				organizationId: discussion.organizationId,
 				discussionId: discussion.id,
 			},
 		);
@@ -240,6 +237,7 @@ export class WorkspaceNotificationService {
 	): Promise<void> {
 		const payload = this.buildSilentPayload({
 			type: 'DISCUSSION_MESSAGE_UPDATED',
+			organizationId,
 			discussionId,
 			messageId,
 		});
@@ -261,6 +259,7 @@ export class WorkspaceNotificationService {
 	): Promise<void> {
 		const payload = this.buildSilentPayload({
 			type: 'DISCUSSION_MESSAGE_DELETED',
+			organizationId,
 			discussionId,
 			messageId,
 		});
@@ -281,6 +280,7 @@ export class WorkspaceNotificationService {
 	): Promise<void> {
 		const payload = this.buildSilentPayload({
 			type: 'DISCUSSION_CONTEXT_CHANGED',
+			organizationId,
 			discussionId,
 		});
 
