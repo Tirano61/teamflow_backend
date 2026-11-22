@@ -75,8 +75,10 @@ export class WorkspaceNotificationService {
 	 * La operacion funcional ya se confirmo: el push es de mejor esfuerzo y no debe demorar la
 	 * respuesta HTTP (consulta de destinatarios + envio a Firebase + limpieza de tokens). Se lanza
 	 * sin esperar y sus errores se registran aca. La Promise devuelta se resuelve de inmediato, asi
-	 * los llamadores conservan su `await` y su manejo de errores. Si el proceso se detiene en ese
-	 * intervalo, el push se pierde (igual que si Firebase fallara).
+	 * los llamadores conservan su `await` y su manejo de errores.
+	 * No garantiza la entrega: el envio vive solo en memoria. Si el proceso termina (caida, deploy
+	 * con SIGTERM, reinicio) antes de que Firebase acepte los mensajes, el push se pierde sin
+	 * reintento. Ver "Garantias de entrega" en docs/workspace-endpoints.md.
 	 */
 	private dispatchInBackground(
 		organizationId: string,

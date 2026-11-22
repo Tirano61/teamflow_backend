@@ -1861,7 +1861,15 @@ Los ejemplos de payload de cada evento muestran los campos propios; ademas, todo
 
 Notas operativas:
 - El envio push/silent sync no revierte operaciones funcionales (discussion, message, status, assignment o contexto) si Firebase falla.
-- Entrega en segundo plano: el endpoint funcional responde sin esperar la consulta de destinatarios, el envio a Firebase ni la limpieza de tokens. Los errores se registran en el log (`Workspace push event=... failed code=...`). Si el proceso se detiene en ese intervalo, el push se pierde. El orden de llegada entre eventos de la misma Discussion no esta garantizado (Firebase tampoco lo garantiza).
+- Entrega en segundo plano: el endpoint funcional responde sin esperar la consulta de destinatarios, el envio a Firebase ni la limpieza de tokens. Los errores se registran en el log (`Workspace push event=... failed code=...`).
+
+Garantias de entrega (mecanismo actual, en memoria y sin cola persistente):
+- **No garantiza la entrega ante una caida del proceso.** El envio arranca despues de confirmar la operacion y corre en memoria del proceso. Si el proceso termina antes de que Firebase acepte los mensajes, ese push se pierde sin reintento y no queda registro pendiente. Esto incluye: caida o `kill`, reinicio por deploy (Render envia `SIGTERM`; el backend no habilita `enableShutdownHooks` ni maneja la senal, asi que termina sin esperar envios en curso) y reinicios del modo watch en desarrollo. La ventana tipica es de unos cientos de ms por evento (1 consulta + llamada a Firebase).
+- A lo sumo una vez por evento y dispositivo: no hay reintentos, tampoco ante errores transitorios de Firebase.
+- "Aceptado por Firebase" (`successCount`) no significa "mostrado en el dispositivo": la entrega final depende de FCM y del dispositivo.
+- El orden de llegada entre eventos de la misma Discussion no esta garantizado (Firebase tampoco lo garantiza).
+- La operacion funcional (Discussion, mensaje, estado, asignacion, contexto) nunca se revierte por un fallo del push: el envio empieza despues de confirmada la escritura y sus errores no llegan a la respuesta HTTP.
+- La app no debe depender del push para mantener datos correctos: los silent sync son una senal de refresco, y al abrir o volver a la app debe consultar la API.
 - Costo por evento: 1 consulta (destinatarios + dispositivos), 1 llamada a Firebase por cada lote de hasta 500 dispositivos y, solo si hubo tokens invalidos, 1 `DELETE`.
 - No se actualiza `lastReadAt` por enviar push; read/unread sigue independiente.
 
