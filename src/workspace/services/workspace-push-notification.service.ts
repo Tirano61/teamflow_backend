@@ -22,6 +22,15 @@ export interface WorkspaceNotificationSendUsersResult extends WorkspaceNotificat
 	totalUsers: number;
 }
 
+/**
+ * Contenido visible de todo push `VISIBLE` de TeamFlow. Android/iOS lo muestran sin pasar por la
+ * app (en segundo plano o cerrada), antes de validar sesion, usuario y organization, y el token
+ * puede seguir registrado despues de un logout sin conexion. Por eso no incluye nombres,
+ * titulos, mensajes, organization, estado ni contexto: el detalle se ve recien al abrir la app.
+ */
+export const GENERIC_PUSH_TITLE = 'TeamFlow';
+export const GENERIC_PUSH_BODY = 'Tenés una nueva notificación';
+
 const MAX_LOGGED_ERROR_MESSAGE_LENGTH = 300;
 
 @Injectable()

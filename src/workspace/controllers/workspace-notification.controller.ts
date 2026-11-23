@@ -2,7 +2,11 @@ import { Controller, Logger, Post, ServiceUnavailableException } from '@nestjs/c
 import { Auth } from '../../auth/decorators/auth.decorator';
 import { GetUser } from '../../auth/decorators/get-user.decorator';
 import { User } from '../../auth/entities/user.entity';
-import { WorkspacePushNotificationService } from '../services/workspace-push-notification.service';
+import {
+	GENERIC_PUSH_BODY,
+	GENERIC_PUSH_TITLE,
+	WorkspacePushNotificationService,
+} from '../services/workspace-push-notification.service';
 
 @Controller('workspace')
 export class WorkspaceNotificationController {
@@ -16,8 +20,9 @@ export class WorkspaceNotificationController {
 		try {
 			return await this.notificationService.sendToUser(user.id, {
 				kind: 'VISIBLE',
-				title: 'Workspace',
-				body: 'Prueba desde NestJS',
+				// Mismo contenido visible que los push reales: la prueba muestra lo que vera el usuario.
+				title: GENERIC_PUSH_TITLE,
+				body: GENERIC_PUSH_BODY,
 				data: {
 					type: 'TEST',
 				},
