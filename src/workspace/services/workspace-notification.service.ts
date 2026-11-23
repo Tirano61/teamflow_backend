@@ -2,10 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { User } from '../../auth/entities/user.entity';
 import { Discussion } from '../entities/discussion.entity';
 import { DiscussionMessage } from '../entities/discussion_message.entity';
-import { DiscussionMessageType } from '../enums/discussion-message-type.enum';
-import { DiscussionStatus } from '../enums/discussion-status.enum';
 import { UserDeviceService } from './user-device.service';
-import { WorkspaceNotificationPayload, WorkspacePushNotificationService } from './workspace-push-notification.service';
+import {
+	GENERIC_PUSH_BODY,
+	GENERIC_PUSH_TITLE,
+	WorkspaceNotificationPayload,
+	WorkspacePushNotificationService,
+} from './workspace-push-notification.service';
 
 /**
  * Datos comunes a todos los push de Discussions. `organizationId` es siempre la organization de la
@@ -21,13 +24,6 @@ type DiscussionPushData = {
 @Injectable()
 export class WorkspaceNotificationService {
 	private readonly logger = new Logger(WorkspaceNotificationService.name);
-
-	private readonly statusLabelMap: Record<DiscussionStatus, string> = {
-		[DiscussionStatus.NEW]: 'Entrada',
-		[DiscussionStatus.REVIEW]: 'Revisión',
-		[DiscussionStatus.IN_PROGRESS]: 'Trabajando',
-		[DiscussionStatus.RESOLVED]: 'Resuelto',
-	};
 
 	constructor(
 		private readonly userDeviceService: UserDeviceService,
@@ -104,15 +100,16 @@ export class WorkspaceNotificationService {
 		return Promise.resolve();
 	}
 
-	private buildVisiblePayload(
-		title: string,
-		body: string,
-		data: DiscussionPushData,
-	): WorkspaceNotificationPayload {
+	/**
+	 * Todos los eventos visibles de Discussions muestran el mismo titulo y cuerpo genericos (ver
+	 * `GENERIC_PUSH_TITLE`): el tipo de evento y los ids viajan solo en `data`, que el sistema
+	 * operativo no muestra.
+	 */
+	private buildVisiblePayload(data: DiscussionPushData): WorkspaceNotificationPayload {
 		return {
 			kind: 'VISIBLE',
-			title,
-			body,
+			title: GENERIC_PUSH_TITLE,
+			body: GENERIC_PUSH_BODY,
 			data,
 		};
 	}
@@ -128,15 +125,11 @@ export class WorkspaceNotificationService {
 		discussion: Discussion,
 		actor: User,
 	): Promise<void> {
-		const payload = this.buildVisiblePayload(
-			'Nueva discusión',
-			`${actor.fullName} creó: ${discussion.title}`,
-			{
-				type: 'DISCUSSION_CREATED',
-				organizationId: discussion.organizationId,
-				discussionId: discussion.id,
-			},
-		);
+		const payload = this.buildVisiblePayload({
+			type: 'DISCUSSION_CREATED',
+			organizationId: discussion.organizationId,
+			discussionId: discussion.id,
+		});
 
 		return this.dispatchInBackground(
 			discussion.organizationId,
@@ -147,62 +140,18 @@ export class WorkspaceNotificationService {
 		);
 	}
 
-	private getMessagePresentation(type: DiscussionMessageType): {
-		title: string;
-		bodySuffix: string;
-	} {
-		switch (type) {
-			case DiscussionMessageType.TEXT:
-				return {
-					title: 'Nuevo mensaje',
-					bodySuffix: 'respondió en',
-				};
-			case DiscussionMessageType.IMAGE:
-				return {
-					title: 'Nueva imagen',
-					bodySuffix: 'agregó una imagen en',
-				};
-			case DiscussionMessageType.AUDIO:
-				return {
-					title: 'Nuevo audio',
-					bodySuffix: 'agregó un audio en',
-				};
-			case DiscussionMessageType.VIDEO:
-				return {
-					title: 'Nuevo video',
-					bodySuffix: 'agregó un video en',
-				};
-			case DiscussionMessageType.FILE:
-				return {
-					title: 'Nuevo archivo',
-					bodySuffix: 'agregó un archivo en',
-				};
-			default:
-				return {
-					title: 'Nuevo mensaje',
-					bodySuffix: 'respondió en',
-				};
-		}
-	}
-
 	notifyDiscussionMessageCreated(
 		discussion: Discussion,
 		message: DiscussionMessage,
 		actor: User,
 	): Promise<void> {
-		const presentation = this.getMessagePresentation(message.type);
-
-		const payload = this.buildVisiblePayload(
-			presentation.title,
-			`${actor.fullName} ${presentation.bodySuffix}: ${discussion.title}`,
-			{
-				type: 'DISCUSSION_MESSAGE',
-				organizationId: discussion.organizationId,
-				discussionId: discussion.id,
-				messageId: message.id,
-				messageType: message.type,
-			},
-		);
+		const payload = this.buildVisiblePayload({
+			type: 'DISCUSSION_MESSAGE',
+			organizationId: discussion.organizationId,
+			discussionId: discussion.id,
+			messageId: message.id,
+			messageType: message.type,
+		});
 
 		return this.dispatchInBackground(
 			discussion.organizationId,
@@ -217,18 +166,12 @@ export class WorkspaceNotificationService {
 		discussion: Discussion,
 		actor: User,
 	): Promise<void> {
-		const visibleStatus = this.statusLabelMap[discussion.status] ?? discussion.status;
-
-		const payload = this.buildVisiblePayload(
-			'Estado actualizado',
-			`${actor.fullName} movió "${discussion.title}" a ${visibleStatus}`,
-			{
-				type: 'DISCUSSION_STATUS_CHANGED',
-				organizationId: discussion.organizationId,
-				discussionId: discussion.id,
-				status: discussion.status,
-			},
-		);
+		const payload = this.buildVisiblePayload({
+			type: 'DISCUSSION_STATUS_CHANGED',
+			organizationId: discussion.organizationId,
+			discussionId: discussion.id,
+			status: discussion.status,
+		});
 
 		return this.dispatchInBackground(
 			discussion.organizationId,
@@ -243,15 +186,11 @@ export class WorkspaceNotificationService {
 		discussion: Discussion,
 		actor: User,
 	): Promise<void> {
-		const payload = this.buildVisiblePayload(
-			'Asignación actualizada',
-			`${actor.fullName} actualizó responsables de: ${discussion.title}`,
-			{
-				type: 'DISCUSSION_ASSIGNMENT_CHANGED',
-				organizationId: discussion.organizationId,
-				discussionId: discussion.id,
-			},
-		);
+		const payload = this.buildVisiblePayload({
+			type: 'DISCUSSION_ASSIGNMENT_CHANGED',
+			organizationId: discussion.organizationId,
+			discussionId: discussion.id,
+		});
 
 		return this.dispatchInBackground(
 			discussion.organizationId,

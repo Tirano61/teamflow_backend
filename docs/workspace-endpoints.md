@@ -770,8 +770,8 @@ Rutas globales (sin `organizationId`): un token FCM identifica una instalacion d
 ```json
 {
   "notification": {
-    "title": "Workspace",
-    "body": "Prueba desde NestJS"
+    "title": "TeamFlow",
+    "body": "Tenés una nueva notificación"
   },
   "data": {
     "type": "TEST",
@@ -779,6 +779,7 @@ Rutas globales (sin `organizationId`): un token FCM identifica una instalacion d
   }
 }
 ```
+  - El contenido visible es el mismo que el de las push automaticas de Discussions (ver "Contenido visible" en "Push automaticas de eventos"), asi la prueba muestra lo que vera el usuario. Antes era `Workspace` / `Prueba desde NestJS`.
 - Respuesta 201 (no incluye tokens):
 ```json
 {
@@ -1710,6 +1711,21 @@ El flujo completo de eliminacion esta en la carpeta "Organization Deletion" de l
   - Prioridad Android: `high` para visible y silent sync.
   - Se envia un mensaje por dispositivo (`sendEach`, en lotes de 500).
 
+Contenido visible (privacidad):
+- Todos los eventos `VISIBLE` de Discussions (y el push de prueba) usan exactamente el mismo `notification`:
+```json
+{
+  "notification": {
+    "title": "TeamFlow",
+    "body": "Tenés una nueva notificación"
+  }
+}
+```
+- Motivo: con la app en segundo plano o cerrada, Android (y iOS) muestran `notification.title/body` sin pasar por la app, es decir antes de que Flutter valide JWT, usuario (`recipientUserId`) u organization. Ademas, despues de un logout sin conexion el token puede seguir registrado en el backend hasta que la app lo revoque.
+- `notification` no incluye nombres de usuarios, titulos de Discussions, texto de mensajes, nombre de la organization, estado ni modules/components/tags. Tampoco se envian `imageUrl`, `android.notification`, `apns` ni `webpush`.
+- El tipo de evento y los ids viajan solo en `data`, que el sistema operativo no muestra. La app obtiene el detalle con las rutas tenant al abrirse.
+- Cambio respecto de la version anterior: el titulo y el cuerpo dependian del evento e incluian `{fullName}`, `{discussion.title}` y el estado visible (`Entrada`, `Revisión`, `Trabajando`, `Resuelto`). `data`, destinatarios y entrega no cambiaron.
+
 Contrato de `data` (comun a todos los eventos de Discussions):
 
 | Campo | Siempre | Descripcion |
@@ -1735,8 +1751,8 @@ Eventos visibles implementados:
 ```json
 {
   "notification": {
-    "title": "Nueva discusión",
-    "body": "{fullName} creó: {discussion.title}"
+    "title": "TeamFlow",
+    "body": "Tenés una nueva notificación"
   },
   "data": {
     "type": "DISCUSSION_CREATED",
@@ -1750,15 +1766,14 @@ Eventos visibles implementados:
 - Triggers:
   - `POST /organizations/:organizationId/workspace/discussions/:discussionId/messages`
   - `POST /organizations/:organizationId/workspace/discussions/:discussionId/messages/files`
-- Tipos de notificacion por `messageType`:
-  - `TEXT`  -> title `Nuevo mensaje` + body `{fullName} respondió en: {discussion.title}`
-  - `IMAGE` -> title `Nueva imagen` + body `{fullName} agregó una imagen en: {discussion.title}`
-  - `AUDIO` -> title `Nuevo audio` + body `{fullName} agregó un audio en: {discussion.title}`
-  - `VIDEO` -> title `Nuevo video` + body `{fullName} agregó un video en: {discussion.title}`
-  - `FILE`  -> title `Nuevo archivo` + body `{fullName} agregó un archivo en: {discussion.title}`
-- Payload comun:
+- El contenido visible es el mismo para todos los `messageType`; el tipo viaja solo en `data.messageType`.
+- Push:
 ```json
 {
+  "notification": {
+    "title": "TeamFlow",
+    "body": "Tenés una nueva notificación"
+  },
   "data": {
     "type": "DISCUSSION_MESSAGE",
     "discussionId": "UUID",
@@ -1774,8 +1789,8 @@ Eventos visibles implementados:
 ```json
 {
   "notification": {
-    "title": "Estado actualizado",
-    "body": "{fullName} movió \"{discussion.title}\" a {estadoVisible}"
+    "title": "TeamFlow",
+    "body": "Tenés una nueva notificación"
   },
   "data": {
     "type": "DISCUSSION_STATUS_CHANGED",
@@ -1784,11 +1799,7 @@ Eventos visibles implementados:
   }
 }
 ```
-- Mapeo visible de estados:
-  - `NEW` -> `Entrada`
-  - `REVIEW` -> `Revisión`
-  - `IN_PROGRESS` -> `Trabajando`
-  - `RESOLVED` -> `Resuelto`
+- El nuevo estado viaja solo en `data.status` (valor del enum: `NEW`, `REVIEW`, `IN_PROGRESS`, `RESOLVED`); no se muestra en la notificacion.
 
 4) Cambios de asignacion (asignar, reemplazar, desasignar)
 - Triggers:
@@ -1799,8 +1810,8 @@ Eventos visibles implementados:
 ```json
 {
   "notification": {
-    "title": "Asignación actualizada",
-    "body": "{fullName} actualizó responsables de: {discussion.title}"
+    "title": "TeamFlow",
+    "body": "Tenés una nueva notificación"
   },
   "data": {
     "type": "DISCUSSION_ASSIGNMENT_CHANGED",
