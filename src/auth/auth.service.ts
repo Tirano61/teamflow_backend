@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   Injectable,
-  InternalServerErrorException,
   OnModuleInit,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -23,6 +22,7 @@ import {
 
 /// Unica respuesta para email inexistente, contraseña incorrecta y usuario inactivo.
 const INVALID_CREDENTIALS_MESSAGE = 'Credentials are not valid';
+const EMAIL_ALREADY_REGISTERED_MESSAGE = 'Email is already registered';
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -162,10 +162,14 @@ export class AuthService implements OnModuleInit {
     return token;
   }
 
-  private handleDBError(error: any): never {
-    if (error.code === '23505') throw new BadRequestException(error.detail);
-    console.log(error);
+  private handleDBError(error: unknown): never {
+    /// 23505 en `users` solo puede venir del email unico. No se devuelve `error.detail`
+    /// ("Key (email)=(...) already exists.") ni otros datos del driver.
+    if ((error as { code?: unknown } | null)?.code === '23505')
+      throw new BadRequestException(EMAIL_ALREADY_REGISTERED_MESSAGE);
 
-    throw new InternalServerErrorException('Please check server logs');
+    /// El resto lo registra GlobalHttpExceptionFilter con secretos redactados (sin `parameters`,
+    /// que incluyen el hash de la contraseña) y responde 500 generico.
+    throw error;
   }
 }

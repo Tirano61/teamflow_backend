@@ -4,6 +4,7 @@ import {
 	ExceptionFilter,
 	HttpException,
 	HttpStatus,
+	Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { MulterError } from 'multer';
@@ -13,6 +14,10 @@ import {
 	isAllowedCorsOrigin,
 	isDiscussionFilesUploadPath,
 } from '../config/cors.config';
+import { describeErrorForLog } from './error-log.util';
+
+/// Unico mensaje de un 500: el detalle (driver, SQL, rutas, configuracion) solo va al log.
+const INTERNAL_SERVER_ERROR_MESSAGE = 'Internal server error';
 
 interface NormalizedErrorResponse {
 	statusCode: number;
@@ -24,6 +29,8 @@ interface NormalizedErrorResponse {
 
 @Catch()
 export class GlobalHttpExceptionFilter implements ExceptionFilter {
+	private readonly logger = new Logger('HttpExceptionFilter');
+
 	catch(exception: unknown, host: ArgumentsHost): void {
 		const ctx = host.switchToHttp();
 		const response = ctx.getResponse<Response>();
@@ -37,7 +44,19 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
 		this.applyCorsHeaders(response, request, isUploadPath);
 
 		const normalized = this.normalizeException(exception, request.url);
+		if (normalized.statusCode >= 500) {
+			this.logServerError(exception, request, normalized.statusCode);
+		}
 		response.status(normalized.statusCode).json(normalized);
+	}
+
+	/// Los 5xx se registran con su causa real, redactada. Se usa el patron de la ruta
+	/// (`/organization-invitations/:token/accept`) para no escribir tokens de la URL en el log.
+	private logServerError(exception: unknown, request: Request, statusCode: number): void {
+		const routePattern =
+			typeof request.route?.path === 'string' ? request.route.path : request.path;
+		const { message, stack } = describeErrorForLog(exception);
+		this.logger.error(`${request.method} ${routePattern} -> ${statusCode}: ${message}`, stack);
 	}
 
 	private applyCorsHeaders(
@@ -112,6 +131,13 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
 
 		if (exception instanceof HttpException) {
 			const status = exception.getStatus();
+
+			/// Un InternalServerErrorException puede llevar detalles de configuracion o del
+			/// entorno. Los demas 5xx (por ejemplo 503) conservan su mensaje, escrito para el cliente.
+			if (status === HttpStatus.INTERNAL_SERVER_ERROR) {
+				return this.makePayload(status, INTERNAL_SERVER_ERROR_MESSAGE, path);
+			}
+
 			const response = exception.getResponse();
 
 			if (typeof response === 'string') {
@@ -122,14 +148,10 @@ export class GlobalHttpExceptionFilter implements ExceptionFilter {
 			return this.makePayload(status, message, path);
 		}
 
-		const fallbackMessage =
-			exception instanceof Error
-				? exception.message || 'Internal server error'
-				: 'Internal server error';
-
+		/// Errores no controlados (TypeORM/pg, fs, librerias): nunca se devuelve `exception.message`.
 		return this.makePayload(
 			HttpStatus.INTERNAL_SERVER_ERROR,
-			fallbackMessage,
+			INTERNAL_SERVER_ERROR_MESSAGE,
 			path,
 		);
 	}
