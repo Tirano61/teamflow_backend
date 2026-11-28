@@ -121,9 +121,17 @@ Implementado con `@nestjs/throttler`, solo en las rutas publicas de autenticacio
 **IP del cliente y proxies (`TRUST_PROXY`)**:
 - Por defecto no se confia en ningun proxy: `req.ip` es la direccion del socket y `X-Forwarded-For` se ignora, asi que no se puede falsificar.
 - Detras de un proxy (Render, dev tunnel) sin `TRUST_PROXY`, todos los clientes llegan con la IP del proxy y **comparten el cupo por IP**. El backend lo advierte una vez en el log (`TRUST_PROXY is not set`) cuando recibe requests con `X-Forwarded-For`.
-- `TRUST_PROXY=<N>` (1 a 10): se confia en los `N` proxies mas cercanos; Express toma la direccion `N` posiciones desde la derecha de `X-Forwarded-For`, de modo que lo que el cliente agregue a la izquierda no cambia su IP. Segun reportes de la comunidad de Render, su proxy agrega su IP al final del header sin limpiar lo que manda el cliente, y Render no documenta cuantos saltos hay: empezar con `1` y comprobar en el log o en una prueba controlada que la IP resultante sea la del cliente.
+- `TRUST_PROXY=<N>` (1 a 10): se confia en los `N` proxies mas cercanos; Express toma la direccion `N` posiciones desde la derecha de `X-Forwarded-For`, de modo que lo que el cliente agregue a la izquierda no cambia su IP. Segun reportes de la comunidad de Render, su proxy agrega su IP al final del header sin limpiar lo que manda el cliente, y Render no documenta cuantos saltos hay: probar con `1` y verificarlo con el procedimiento de abajo antes de darlo por bueno. El backend no se configura solo para Render ni registra la IP resuelta de cada request.
 - `TRUST_PROXY=loopback` (o una lista de `loopback`, `linklocal`, `uniquelocal`, IPs o CIDRs): se confia solo en proxies con esas direcciones; por ejemplo el dev tunnel local, que se conecta desde `::1`.
 - `TRUST_PROXY=true` se rechaza (con advertencia en el log): haria que Express use la entrada mas a la izquierda, que controla el cliente.
+- Al arrancar con un valor valido el log muestra `trust proxy = <valor>`; un valor invalido se ignora con advertencia y el backend sigue sin confiar en proxies.
+
+**Como verificar `TRUST_PROXY` en un entorno con proxy** (sin endpoints nuevos ni pruebas de carga; usar dos redes distintas, por ejemplo Wi-Fi y datos moviles, y emails inexistentes):
+1. Sin `TRUST_PROXY`: si despues del primer login o registro el log muestra `TRUST_PROXY is not set`, hay un proxy delante y todos los clientes comparten el cupo por IP.
+2. Con el valor a probar (por ejemplo `TRUST_PROXY=1`): desde la red A enviar 21 `POST /auth/login` con emails inexistentes **distintos** en menos de 1 minuto. El 21.o debe responder 429 (limite por IP).
+3. Enseguida, desde la red B, un `POST /auth/login`: debe responder 401 (o 201 con credenciales validas), no 429. Si responde 429, el backend sigue viendo la IP del proxy: el valor es demasiado bajo.
+4. Desde la red A, todavia bloqueada, repetir con otro email inexistente y el header `X-Forwarded-For: 203.0.113.7`: debe seguir respondiendo 429. Si responde 401, el cliente puede elegir su IP: el valor es demasiado alto y hay que bajarlo.
+5. El bloqueo de la red A dura 1 minuto; la prueba consume 21 de las 100 requests por IP del limite de 15 minutos.
 
 **Limitaciones del almacenamiento en memoria**:
 - Los contadores se pierden al reiniciar el proceso (deploy, reinicio del modo watch).
