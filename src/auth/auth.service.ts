@@ -2,22 +2,32 @@ import {
   BadRequestException,
   Injectable,
   InternalServerErrorException,
+  OnModuleInit,
   UnauthorizedException,
 } from '@nestjs/common';
 import { CreateUserDto } from './dto/create_user.dto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entities/user.entity';
-import * as bcrypt from 'bcrypt';
 import { LoginUserDto } from './dto/login_user.dto';
 import { JWTPayloadInterface } from './interfaces/jwt-payload.interface';
 import { JwtService } from '@nestjs/jwt';
 import { UpdateUserRolesDto } from './dto/update_user_roles.dto';
 import { UpdateUserPasswordDto } from './dto/update_user_password.dto';
 import { normalizeEmail } from './helpers/normalize-email';
+import {
+  createDummyPasswordHash,
+  hashPassword,
+  verifyPassword,
+} from './helpers/password-hashing';
+
+/// Unica respuesta para email inexistente, contraseña incorrecta y usuario inactivo.
+const INVALID_CREDENTIALS_MESSAGE = 'Credentials are not valid';
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
+  private dummyPasswordHash?: Promise<string>;
+
   /// Inyectado el repositorio de la tabla de usuarios
   constructor(
     @InjectRepository(User)
@@ -25,12 +35,17 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
+  async onModuleInit() {
+    /// Se precalcula al arrancar para que el primer login con un email inexistente no lo pague.
+    await this.getDummyPasswordHash();
+  }
+
   async createUser(createUserDto: CreateUserDto) {
     try {
       const { password, ...userData } = createUserDto;
       const user = this.userRepository.create({
         ...userData,
-        password: bcrypt.hashSync(password, 10),
+        password: await hashPassword(password),
       });
 
       await this.userRepository.save(user);
@@ -58,15 +73,26 @@ export class AuthService {
         id: true,
         fullName: true,
         roles: true,
+        isActive: true,
       },
     });
 
-    if (!user) throw new UnauthorizedException('Credentials are not valid');
+    /// Siempre se ejecuta una comparacion bcrypt, aunque el email no exista (contra un hash
+    /// ficticio del mismo costo), para no responder mas rapido segun exista o no la cuenta.
+    const passwordHash =
+      typeof user?.password === 'string'
+        ? user.password
+        : await this.getDummyPasswordHash();
+    const passwordMatches = await verifyPassword(password, passwordHash);
 
-    if (!bcrypt.compareSync(password, user.password))
-      throw new UnauthorizedException('Credentials are not valid');
+    /// El estado se revisa despues de comparar y con el mismo mensaje: un usuario inactivo no
+    /// recibe JWT y la respuesta no revela si la cuenta existe, esta inactiva o la clave es mala.
+    if (!user || !passwordMatches || !user.isActive)
+      throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
 
-    delete (user as any).password;
+    /// Mismo cuerpo que antes: `isActive` solo se selecciona para la verificacion.
+    delete (user as Partial<User>).password;
+    delete (user as Partial<User>).isActive;
 
     return {
       ...user,
@@ -109,7 +135,7 @@ export class AuthService {
     if (!user)
       throw new BadRequestException(`User with id ${userId} not found`);
 
-    user.password = bcrypt.hashSync(updateUserPasswordDto.password, 10);
+    user.password = await hashPassword(updateUserPasswordDto.password);
 
     try {
       await this.userRepository.save(user);
@@ -120,6 +146,15 @@ export class AuthService {
     } catch (error) {
       this.handleDBError(error);
     }
+  }
+
+  private getDummyPasswordHash(): Promise<string> {
+    this.dummyPasswordHash ??= createDummyPasswordHash().catch((error) => {
+      /// No memorizar un fallo: el siguiente intento lo vuelve a calcular.
+      this.dummyPasswordHash = undefined;
+      throw error;
+    });
+    return this.dummyPasswordHash;
   }
 
   private getJwtToken(payload: JWTPayloadInterface) {
