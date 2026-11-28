@@ -14,6 +14,7 @@ import { JWTPayloadInterface } from './interfaces/jwt-payload.interface';
 import { JwtService } from '@nestjs/jwt';
 import { UpdateUserRolesDto } from './dto/update_user_roles.dto';
 import { UpdateUserPasswordDto } from './dto/update_user_password.dto';
+import { normalizeEmail } from './helpers/normalize-email';
 
 @Injectable()
 export class AuthService {
@@ -46,7 +47,8 @@ export class AuthService {
   }
 
   async loginUser(loginUserDto: LoginUserDto) {
-    const { email, password } = loginUserDto;
+    const { password } = loginUserDto;
+    const email = normalizeEmail(loginUserDto.email);
 
     const user = await this.userRepository.findOne({
       where: { email },
