@@ -20,7 +20,27 @@ Autorizacion tenant:
 Fechas:
 - Todas las fechas de las respuestas son instantes ISO-8601 en UTC (`2026-10-31T16:04:38.835Z`). El cliente las convierte a su zona local para mostrarlas.
 
+Formato de errores:
+- Todas las respuestas de error (lo arma `GlobalHttpExceptionFilter`) tienen la misma forma:
+```json
+{
+  "statusCode": 404,
+  "error": "NOT_FOUND",
+  "message": "Discussion not found",
+  "timestamp": "2026-11-28T15:44:25.203Z",
+  "path": "/api/v1/organizations/<organizationId>/workspace/discussions/<id>"
+}
+```
+- `message` es un string o, en errores de validacion (400), un array de strings.
+- 400, 401, 403, 404, 409, 413, 429 y 503 conservan el mensaje escrito para el cliente.
+- **500 siempre responde `"message": "Internal server error"`**, tanto en errores no controlados (PostgreSQL/TypeORM, sistema de archivos, librerias) como en `InternalServerErrorException`. Nunca se devuelven mensajes del driver, `error.detail`, SQL, rutas del servidor, stack traces ni detalles de configuracion. La causa real queda en el log del servidor.
+- Logs del servidor: cada 5xx se registra una vez con metodo, patron de ruta (por ejemplo `/api/v1/organization-invitations/:token/accept`, nunca la URL con tokens), tipo y mensaje del error, `code`/`table`/`constraint` de PostgreSQL, SQL con placeholders y stack. No se registran `parameters` ni `detail` de TypeORM/pg (pueden contener hashes o valores de columnas) y se redactan JWT, valores `Bearer`, hashes bcrypt y pares `password=`/`token=`/`secret=`. Ningun log imprime headers `Authorization`, cookies ni contraseñas.
+
 ## Auth
+
+Reglas comunes de `/auth/users`, `/auth/register` y `/auth/login`:
+- **Normalizacion del email**: se recortan los espacios exteriores y se pasa a minusculas (`toLocaleLowerCase().trim()`, igual que la entidad `User` al guardar). `"  Usuario@Ejemplo.com "` se registra y se busca como `usuario@ejemplo.com`. Los emails ya guardados no se modifican: todos estaban normalizados por la entidad.
+- **Rate limiting**: limitadas por IP (y login ademas por email). Al superar el limite responden 429. Ver "Rate limiting de autenticacion".
 
 ### POST /auth/users
 - Auth: Publico
@@ -33,18 +53,82 @@ Fechas:
   "fullName": "Admin TeamFlow"
 }
 ```
+- Validacion:
+  - `email`: email valido (despues de normalizar).
+  - `password`: politica de creacion: 6 a 50 caracteres, con mayuscula, minuscula y numero (o simbolo).
+  - `fullName`: string no vacio.
+- Respuesta 201: el usuario creado (sin `password`) mas `token`.
+- Errores:
+  - 400 validacion (`message` es un array).
+  - 400 `Email is already registered` (el email normalizado ya existe). Antes devolvia el `detail` de PostgreSQL (`Key (email)=(...) already exists.`).
+  - 429 `Too many attempts, please try again later` (limite `signup`).
+  - 500 `Internal server error`.
 
 ### POST /auth/register
 - Auth: Publico
-- Descripcion: Alias funcional de creacion de usuario con la misma validacion y respuesta de `/auth/users`.
+- Descripcion: Alias funcional de creacion de usuario con la misma validacion, respuesta y errores de `/auth/users`. Comparte con `/auth/users` el mismo cupo de rate limiting (`signup`).
 
 ### POST /auth/login
 - Auth: Publico
 - Descripcion: Inicia sesion y retorna token JWT.
+- Body:
+```json
+{
+  "email": "admin@teamflow.com",
+  "password": "Admin123"
+}
+```
+- Validacion:
+  - `email`: email valido (despues de normalizar).
+  - `password`: string no vacio de hasta 128 caracteres. **No** se aplica la politica de complejidad de creacion: una contraseña existente que no la cumpla puede autenticarse. La complejidad solo se valida al crear o cambiar la contraseña.
+- Respuesta 201 (sin cambios):
+```json
+{
+  "id": "4c0d3f5a-4d0d-4b0b-9d2a-8a4d1f0b2c31",
+  "email": "admin@teamflow.com",
+  "fullName": "Admin TeamFlow",
+  "roles": ["user"],
+  "token": "<jwt>"
+}
+```
+- Errores:
+  - 400 validacion (`message` es un array).
+  - 401 `Credentials are not valid`: mismo cuerpo para email inexistente, contraseña incorrecta y usuario con `isActive = false`. Un usuario inactivo **no recibe JWT** (antes se emitia uno que luego rechazaba `JwtStrategy`).
+  - 429 `Too many attempts, please try again later` (limite `login`), con header `Retry-After` en segundos.
+- Proteccion contra enumeracion: si el email no existe, igual se ejecuta una comparacion bcrypt contra un hash ficticio del mismo costo (10), calculado una vez al arrancar a partir de un secreto aleatorio descartado. Asi el tiempo de respuesta no depende significativamente de si la cuenta existe (no es tiempo constante en sentido estricto: queda la variacion normal de la consulta y la red). El estado `isActive` se evalua despues de comparar la contraseña.
+- El JWT no cambia: mismos claims (`id`, `iat`), sin expiracion y firmado con `JWT_SECRET_KEY`.
 
 ### GET /auth/validate
 - Auth: Usuario autenticado
 - Descripcion: Valida token actual y retorna datos del usuario autenticado.
+- 401 si falta el token, la firma es invalida, el usuario no existe o esta inactivo (`JwtStrategy`). Sin rate limiting.
+
+### Rate limiting de autenticacion
+
+Implementado con `@nestjs/throttler`, solo en las rutas publicas de autenticacion (no hay limite global). Los valores estan centralizados en `src/config/auth-rate-limit.config.ts`.
+
+| Scope | Rutas | Por IP (rafaga) | Por IP (sostenido) | Por email normalizado |
+| --- | --- | --- | --- | --- |
+| `login` | `POST /auth/login` | 20 / 1 min | 100 / 15 min | 10 / 15 min |
+| `signup` | `POST /auth/register`, `POST /auth/users` (cupo compartido) | 10 / 1 min | 30 / 1 h | no aplica |
+
+- Se cuentan todas las requests a esas rutas: exitosas, fallidas y con body invalido (el limite se evalua antes de validar el body).
+- Al superar un limite la ruta queda bloqueada para esa IP o email durante la ventana del limite superado (1 min, 15 min o 1 h) y responde 429 en el formato comun, con `message: "Too many attempts, please try again later"` y header `Retry-After` (segundos). Las respuestas exitosas no cambian ni agregan headers.
+- Por IP: cambiar el email no evade el limite. IPv6 se agrupa por /64; IPv4 mapeado (`::ffff:a.b.c.d`) cuenta como IPv4.
+- Por email (solo login): frena ataques distribuidos contra una misma cuenta. Si el body no trae un email utilizable se cuenta por IP. Contrapartida conocida: quien conozca un email puede agotar el cupo de esa cuenta y demorar su login legitimo hasta 15 minutos (no hay bloqueo permanente).
+- Los contadores se guardan hasheados (sin emails ni IPs en claro) en la memoria del proceso.
+
+**IP del cliente y proxies (`TRUST_PROXY`)**:
+- Por defecto no se confia en ningun proxy: `req.ip` es la direccion del socket y `X-Forwarded-For` se ignora, asi que no se puede falsificar.
+- Detras de un proxy (Render, dev tunnel) sin `TRUST_PROXY`, todos los clientes llegan con la IP del proxy y **comparten el cupo por IP**. El backend lo advierte una vez en el log (`TRUST_PROXY is not set`) cuando recibe requests con `X-Forwarded-For`.
+- `TRUST_PROXY=<N>` (1 a 10): se confia en los `N` proxies mas cercanos; Express toma la direccion `N` posiciones desde la derecha de `X-Forwarded-For`, de modo que lo que el cliente agregue a la izquierda no cambia su IP. Segun reportes de la comunidad de Render, su proxy agrega su IP al final del header sin limpiar lo que manda el cliente, y Render no documenta cuantos saltos hay: empezar con `1` y comprobar en el log o en una prueba controlada que la IP resultante sea la del cliente.
+- `TRUST_PROXY=loopback` (o una lista de `loopback`, `linklocal`, `uniquelocal`, IPs o CIDRs): se confia solo en proxies con esas direcciones; por ejemplo el dev tunnel local, que se conecta desde `::1`.
+- `TRUST_PROXY=true` se rechaza (con advertencia en el log): haria que Express use la entrada mas a la izquierda, que controla el cliente.
+
+**Limitaciones del almacenamiento en memoria**:
+- Los contadores se pierden al reiniciar el proceso (deploy, reinicio del modo watch).
+- Con varias instancias cada una cuenta por separado: el limite efectivo se multiplica por la cantidad de instancias y un cliente balanceado entre ellas obtiene mas intentos. Para un limite global haria falta un storage compartido (por ejemplo Redis), que hoy no existe.
+- Correr la coleccion Postman completa varias veces seguidas desde la misma IP puede alcanzar el limite `signup` (5 altas por corrida, incluido el duplicado). La carpeta final "Auth Rate Limiting (run last)" agota a proposito los limites `login` (con un email inexistente dedicado) y `signup` (con bodies invalidos, sin crear usuarios): ejecutarla al final o por separado.
 
 ## Users
 
@@ -705,7 +789,7 @@ Crear y listar mensajes requiere Membership ACTIVE con cualquier role. Editar y 
   "messageId": "UUID"
 }
 ```
-- Errores: 403 sin Membership `ACTIVE`; 404 `Discussion not found`; 404 `Discussion message not found`; 403 `You can only modify your own messages`; 500 `Could not delete attachment from Cloudinary`.
+- Errores: 403 sin Membership `ACTIVE`; 404 `Discussion not found`; 404 `Discussion message not found`; 403 `You can only modify your own messages`; 500 `Internal server error` si Cloudinary no pudo eliminar el adjunto (el log registra `Cloudinary delete failed ...`).
 
 ## Devices (FCM)
 
@@ -1564,7 +1648,7 @@ El paso 3 no tiene endpoint propio: lo hace la operacion sensible dentro de su p
   - 401 sin token valido
   - 403 sin Membership en la organization, Membership `SUSPENDED`/`LEFT`, o role insuficiente para el purpose (`ADMIN`, `DEVELOPER` y `MEMBER` para `DELETE_ORGANIZATION`)
   - 429 `A security verification was requested recently, try again in N seconds` (cooldown) o `A security verification was requested concurrently, try again later` (otra solicitud simultanea del mismo scope gano la carrera)
-  - 500 `Security verification is not configured` (falta `SECURITY_VERIFICATION_SECRET` en el servidor)
+  - 500 `Internal server error` si falta `SECURITY_VERIFICATION_SECRET` en el servidor (el log registra `SECURITY_VERIFICATION_SECRET is not configured`)
   - 503 `Verification email could not be sent, try again later` (proveedor de email no configurado, caido o rechazo el envio)
 
 ### POST /organizations/:organizationId/security-verifications/:verificationId/verify
@@ -1616,7 +1700,7 @@ El paso 3 no tiene endpoint propio: lo hace la operacion sensible dentro de su p
   - 409 `Security verification has expired, request a new code` (`EXPIRED` o `expiresAt` vencido)
   - 429 `Invalid verification code. Maximum number of verification attempts reached, request a new code` (quinto codigo incorrecto)
   - 429 `Maximum number of verification attempts reached, request a new code` (cualquier intento sobre una verificacion `LOCKED`)
-  - 500 `Security verification is not configured`
+  - 500 `Internal server error` si falta `SECURITY_VERIFICATION_SECRET`
 
 ### Decision de status HTTP
 - **400 codigo incorrecto**: es un input invalido para esa verificacion, igual que el resto de validaciones de dominio del proyecto. La verificacion sigue utilizable.
