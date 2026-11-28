@@ -1,3 +1,4 @@
+import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsString,
@@ -5,8 +6,10 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { normalizeEmailInput } from '../helpers/normalize-email';
 
 export class CreateUserDto {
+  @Transform(({ value }) => normalizeEmailInput(value))
   @IsString()
   @IsEmail()
   email: string;

@@ -7,6 +7,9 @@ import { PassportModule } from '@nestjs/passport';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { buildAuthThrottlerOptions } from '../config/auth-rate-limit.config';
+import { getIdentityTracker } from './guards/auth-rate-limit/auth-rate-limit.guard';
 
 @Module({
   controllers: [AuthController],
@@ -16,6 +19,10 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 
     TypeOrmModule.forFeature([User]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
+
+    /// Rate limiting en memoria de login y registro. No hay guard global: solo limitan las rutas
+    /// marcadas con @AuthRateLimit(). Ver src/config/auth-rate-limit.config.ts.
+    ThrottlerModule.forRoot(buildAuthThrottlerOptions(getIdentityTracker)),
 
     JwtModule.registerAsync({
       imports: [ConfigModule],

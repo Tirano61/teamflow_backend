@@ -366,6 +366,233 @@
 					}
 				},
 				{
+					"name": "Login with mixed-case and spaced email",
+					"event": [
+						{
+							"listen": "prerequest",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"// Variable local de esta request: el email de la coleccion en mayusculas y con espacios exteriores.",
+									"var email = pm.collectionVariables.get('email') || pm.variables.get('email') || '';",
+									"pm.variables.set('loginEmailVariant', '  ' + email.toUpperCase() + '  ');"
+								]
+							}
+						},
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Status is 201', function () { pm.response.to.have.status(201); });",
+									"pm.test('Email is normalized in the response', function () {",
+									"  var email = pm.collectionVariables.get('email') || pm.variables.get('email') || '';",
+									"  pm.expect(data.email).to.eql(email.trim().toLowerCase());",
+									"});",
+									"pm.test('Response has token and no password/isActive', function () {",
+									"  pm.expect(data.token).to.be.a('string').and.not.empty;",
+									"  pm.expect(data.password).to.be.undefined;",
+									"  pm.expect(data.isActive).to.be.undefined;",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{loginEmailVariant}}\",\n  \"password\": \"{{password}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/login",
+						"description": "El email se recorta y se pasa a minusculas antes de buscarlo, igual que al registrarse."
+					}
+				},
+				{
+					"name": "Login wrong password (401 generic)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Status is 401', function () { pm.response.to.have.status(401); });",
+									"pm.test('Generic credentials message', function () {",
+									"  pm.expect(data.message).to.eql('Credentials are not valid');",
+									"});",
+									"pm.test('No token issued', function () { pm.expect(data.token).to.be.undefined; });",
+									"pm.test('Error body keeps the common format', function () {",
+									"  pm.expect(Object.keys(data)).to.have.members(['statusCode', 'error', 'message', 'timestamp', 'path']);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"WrongPassword123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/login",
+						"description": "Mismo 401 que un email inexistente o un usuario inactivo. Consume 1 intento del limite por email (10 / 15 min)."
+					}
+				},
+				{
+					"name": "Login unknown email (401 generic)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Status is 401', function () { pm.response.to.have.status(401); });",
+									"pm.test('Generic credentials message', function () {",
+									"  pm.expect(data.message).to.eql('Credentials are not valid');",
+									"});",
+									"pm.test('No token issued', function () { pm.expect(data.token).to.be.undefined; });",
+									"pm.test('Error body keeps the common format', function () {",
+									"  pm.expect(Object.keys(data)).to.have.members(['statusCode', 'error', 'message', 'timestamp', 'path']);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"unknown-user-{{$timestamp}}@example.com\",\n  \"password\": \"{{password}}\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/login",
+						"description": "Email inexistente: mismo cuerpo que una contraseña incorrecta y tiempo de respuesta comparable (se compara contra un hash bcrypt ficticio)."
+					}
+				},
+				{
+					"name": "Login empty password (400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Status is 400', function () { pm.response.to.have.status(400); });",
+									"pm.test('Validation message', function () {",
+									"  pm.expect(data.message).to.include('password should not be empty');",
+									"});",
+									"pm.test('Error body keeps the common format', function () {",
+									"  pm.expect(Object.keys(data)).to.have.members(['statusCode', 'error', 'message', 'timestamp', 'path']);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/login",
+						"description": "El login solo valida el formato (string no vacio, hasta 128 caracteres). La politica de complejidad se aplica al crear o cambiar la contraseña, no al autenticar."
+					}
+				},
+				{
+					"name": "Register duplicate email (400)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"pm.test('Status is 400', function () { pm.response.to.have.status(400); });",
+									"pm.test('Generic duplicate message without database detail', function () {",
+									"  pm.expect(data.message).to.eql('Email is already registered');",
+									"  pm.expect(pm.response.text()).to.not.include('Key (email)');",
+									"});",
+									"pm.test('Error body keeps the common format', function () {",
+									"  pm.expect(Object.keys(data)).to.have.members(['statusCode', 'error', 'message', 'timestamp', 'path']);",
+									"});"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"  {{email}}  \",\n  \"password\": \"{{password}}\",\n  \"fullName\": \"Duplicate\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/register",
+						"description": "El email se normaliza antes de comprobar el duplicado. No expone el detail de PostgreSQL."
+					}
+				},
+				{
 					"name": "Create invited user",
 					"event": [
 						{
@@ -14203,6 +14430,130 @@
 						"url": "{{baseUrl}}/organizations/{{otherOrganizationId}}"
 					},
 					"description": "La organization del usuario invitado (ex-miembro LEFT de la organization eliminada) no se ve afectada."
+				}
+			]
+		},
+		{
+			"name": "Auth Rate Limiting (run last)",
+			"description": "Agota a proposito los limites de autenticacion (ver docs/workspace-endpoints.md, \"Rate limiting de autenticacion\"). Ejecutar al final o por separado, en el Collection Runner (las requests se repiten con setNextRequest hasta recibir 429). Despues, la misma IP queda bloqueada en el scope afectado durante la ventana del limite (1 min para signup; 15 min para el email de prueba). No crea usuarios: el registro se prueba con bodies invalidos, que tambien cuentan.",
+			"item": [
+				{
+					"name": "Login rate limit by email (429)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"var attempts = Number(pm.collectionVariables.get('authRateLimitAttempts') || 0) + 1;",
+									"var next = function (name) {",
+									"  if (pm.execution && pm.execution.setNextRequest) { pm.execution.setNextRequest(name); } else { postman.setNextRequest(name); }",
+									"};",
+									"if (pm.response.code === 429) {",
+									"  pm.test('Login by email: 429 after ' + attempts + ' attempt(s) in this run', function () {",
+									"    pm.expect(data.message).to.eql('Too many attempts, please try again later');",
+									"    pm.expect(data.statusCode).to.eql(429);",
+									"  });",
+									"  pm.test('Retry-After header in seconds', function () {",
+									"    pm.expect(Number(pm.response.headers.get('Retry-After'))).to.be.above(0);",
+									"  });",
+									"  pm.test('Error body keeps the common format', function () {",
+									"    pm.expect(Object.keys(data)).to.have.members(['statusCode', 'error', 'message', 'timestamp', 'path']);",
+									"  });",
+									"  pm.collectionVariables.unset('authRateLimitAttempts');",
+									"} else if (attempts < 15) {",
+									"  pm.test('Before the limit: ' + pm.response.code, function () { pm.expect(pm.response.code).to.be.oneOf([401]); });",
+									"  pm.collectionVariables.set('authRateLimitAttempts', attempts);",
+									"  next(pm.info.requestName);",
+									"} else {",
+									"  pm.collectionVariables.unset('authRateLimitAttempts');",
+									"  pm.test('Login by email: 429 within 15 attempts', function () { pm.expect.fail('no 429 received'); });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"rate-limit-probe@example.com\",\n  \"password\": \"WrongPassword123\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/login",
+						"description": "Email inexistente dedicado a esta prueba: el limite por email (10 / 15 min) responde 429 sin afectar a los usuarios de la coleccion. En una corrida completa puede llegar antes el limite por IP (20 / 1 min), con el mismo 429."
+					}
+				},
+				{
+					"name": "Register rate limit by IP (429)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"type": "text/javascript",
+								"exec": [
+									"var data = {};",
+									"try { data = pm.response.json(); } catch (e) { data = {}; }",
+									"var attempts = Number(pm.collectionVariables.get('authRateLimitAttempts') || 0) + 1;",
+									"var next = function (name) {",
+									"  if (pm.execution && pm.execution.setNextRequest) { pm.execution.setNextRequest(name); } else { postman.setNextRequest(name); }",
+									"};",
+									"if (pm.response.code === 429) {",
+									"  pm.test('Signup by IP: 429 after ' + attempts + ' attempt(s) in this run', function () {",
+									"    pm.expect(data.message).to.eql('Too many attempts, please try again later');",
+									"    pm.expect(data.statusCode).to.eql(429);",
+									"  });",
+									"  pm.test('Retry-After header in seconds', function () {",
+									"    pm.expect(Number(pm.response.headers.get('Retry-After'))).to.be.above(0);",
+									"  });",
+									"  pm.test('Error body keeps the common format', function () {",
+									"    pm.expect(Object.keys(data)).to.have.members(['statusCode', 'error', 'message', 'timestamp', 'path']);",
+									"  });",
+									"  pm.collectionVariables.unset('authRateLimitAttempts');",
+									"} else if (attempts < 15) {",
+									"  pm.test('Before the limit: ' + pm.response.code, function () { pm.expect(pm.response.code).to.be.oneOf([400]); });",
+									"  pm.collectionVariables.set('authRateLimitAttempts', attempts);",
+									"  next(pm.info.requestName);",
+									"} else {",
+									"  pm.collectionVariables.unset('authRateLimitAttempts');",
+									"  pm.test('Signup by IP: 429 within 15 attempts', function () { pm.expect.fail('no 429 received'); });",
+									"}"
+								]
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"not-an-email\",\n  \"password\": \"x\",\n  \"fullName\": \"\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": "{{baseUrl}}/auth/register",
+						"description": "Body invalido a proposito (400, no crea usuarios). register y users comparten el limite por IP (10 / 1 min); cuentan tambien las altas previas de la coleccion en el mismo minuto."
+					}
 				}
 			]
 		}

@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { Request, Response, NextFunction, json, urlencoded } from 'express';
 import {
@@ -12,6 +12,8 @@ import {
 } from './config/cors.config';
 import { GlobalHttpExceptionFilter } from './filters/global-http-exception.filter';
 import { enforceBackendTimeZone } from './config/timezone.config';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import { resolveTrustProxySetting } from './config/trust-proxy.config';
 
 const DEFAULT_REQUEST_BODY_LIMIT_BYTES = 25 * 1024 * 1024;
 
@@ -44,7 +46,15 @@ async function bootstrap() {
 	await ConfigModule.envVariablesLoaded;
 	enforceBackendTimeZone();
 
-	const app = await NestFactory.create(AppModule);
+	const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+	/// Origen de req.ip para el rate limiting. Desactivado salvo que TRUST_PROXY lo defina.
+	const trustProxy = resolveTrustProxySetting();
+	if (trustProxy !== undefined) {
+		app.set('trust proxy', trustProxy);
+		new Logger('TrustProxy').log(`trust proxy = ${JSON.stringify(trustProxy)}`);
+	}
+
 	const requestBodyLimit = resolveRequestBodyLimit();
 
 	app.use(json({ limit: requestBodyLimit }));
